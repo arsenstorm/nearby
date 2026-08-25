@@ -1,6 +1,7 @@
 public struct Dedup: Sendable {
     private struct Key: Hashable {
         var source: NodeID
+        var destination: NodeID
         var stream: UInt8
     }
 
@@ -17,8 +18,9 @@ public struct Dedup: Sendable {
         self.windowSize = windowSize
     }
 
-    public mutating func check(source: NodeID, stream: UInt8, sequence: UInt32) -> Bool {
-        let key = Key(source: source, stream: stream)
+    /// Unicast streams number per destination, so the destination is part of the identity.
+    public mutating func check(source: NodeID, destination: NodeID = .broadcast, stream: UInt8, sequence: UInt32) -> Bool {
+        let key = Key(source: source, destination: destination, stream: stream)
 
         guard var entry = state[key] else {
             state[key] = State(highest: sequence, seen: [sequence])
