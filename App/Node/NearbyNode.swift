@@ -515,7 +515,7 @@ final class NearbyNode {
     }
 
     private func upsertPeer(id: NodeID, name: String, lastSeen: Date) {
-        let links = mesh.links(to: id)
+        let links = displayLinks(for: id)
         if let index = peers.firstIndex(where: { $0.id == id }) {
             peers[index].name = name
             peers[index].lastSeen = lastSeen
@@ -534,8 +534,13 @@ final class NearbyNode {
         peers.sort { $0.name == $1.name ? $0.id < $1.id : $0.name < $1.name }
     }
 
+    /// Stable order for the UI; `mesh.links(to:)` orders by live cost and would reshuffle every second.
+    private func displayLinks(for id: NodeID) -> [LinkID] {
+        mesh.links(to: id).sorted { $0.description < $1.description }
+    }
+
     private func rebuildPeerLinks() {
-        for index in peers.indices { peers[index].links = mesh.links(to: peers[index].id) }
+        for index in peers.indices { peers[index].links = displayLinks(for: peers[index].id) }
     }
 
     private func refreshPaths(now: Date = Date(), force: Bool = false) {
