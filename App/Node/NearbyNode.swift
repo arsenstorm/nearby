@@ -764,7 +764,7 @@ final class NearbyNode {
     /// In a call with other members, none of them reachable.
     var disconnected: Bool {
         let others = currentMembers.filter { $0.id != nodeID }
-        return inCall && !others.isEmpty && !others.contains { pathInfo[$0.id] != nil }
+        return inCall && !others.isEmpty && !others.contains { member in peers.contains { $0.id == member.id } }
     }
 
     private var currentMembers: [Member] { hosted?.members ?? joined?.members ?? [] }
