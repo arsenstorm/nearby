@@ -109,4 +109,14 @@ import Testing
         var room = makeRoom()
         #expect(room.remove(room.host.id) == nil)
     }
+
+    @Test func takeoverKeepsMembersAndKey() {
+        let host = Member(id: NodeID(raw: 1), name: "a")
+        let other = Member(id: NodeID(raw: 2), name: "b")
+        let key = Data(repeating: 7, count: 32)
+        let room = HostRoom(takingOver: 9, name: "r", host: host, members: [other], roomKey: key)
+        #expect(room.members == [host, other])
+        #expect(room.roomKey == key)
+        #expect(room.announce.host == host.id)
+    }
 }

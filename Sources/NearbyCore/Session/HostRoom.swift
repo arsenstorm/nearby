@@ -18,6 +18,16 @@ public struct HostRoom: Sendable {
         self.roomKey = Self.generateKey()
     }
 
+    /// Takes over an existing room after the host was lost: same id, same members, same key, so voice never pauses.
+    public init(takingOver id: RoomID, name: String, host: Member, members: [Member], roomKey: Data) {
+        self.id = id
+        self.name = name
+        self.host = host
+        self.members = members.contains(where: { $0.id == host.id }) ? members : [host] + members
+        self.pending = []
+        self.roomKey = roomKey
+    }
+
     public var announce: RoomAnnounce {
         RoomAnnounce(roomID: id, name: name, host: host.id, hasCode: false)
     }
