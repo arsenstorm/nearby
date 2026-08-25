@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 public typealias RoomID = UInt64
@@ -7,12 +8,25 @@ public struct RoomAnnounce: Codable, Sendable, Equatable {
     public var name: String
     public var host: NodeID
     public var hasCode: Bool
+    /// HMAC over (roomID, host) keyed by the room key. Announces are plaintext broadcasts, so members use it to reject a forged host claim.
+    public var proof: Data?
 
-    public init(roomID: RoomID, name: String, host: NodeID, hasCode: Bool) {
+    public init(roomID: RoomID, name: String, host: NodeID, hasCode: Bool, proof: Data? = nil) {
         self.roomID = roomID
         self.name = name
         self.host = host
         self.hasCode = hasCode
+        self.proof = proof
+    }
+
+    public static func proof(roomID: RoomID, host: NodeID, roomKey: Data) -> Data {
+        var message = withUnsafeBytes(of: roomID.bigEndian) { Data($0) }
+        message.append(host.bytes)
+        return Data(HMAC<SHA256>.authenticationCode(for: message, using: SymmetricKey(data: roomKey))).prefix(16)
+    }
+
+    public func verifyProof(roomKey: Data) -> Bool {
+        proof == Self.proof(roomID: roomID, host: host, roomKey: roomKey)
     }
 }
 

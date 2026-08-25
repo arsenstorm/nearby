@@ -29,7 +29,8 @@ public struct HostRoom: Sendable {
     }
 
     public var announce: RoomAnnounce {
-        RoomAnnounce(roomID: id, name: name, host: host.id, hasCode: false)
+        RoomAnnounce(roomID: id, name: name, host: host.id, hasCode: false,
+                     proof: RoomAnnounce.proof(roomID: id, host: host.id, roomKey: roomKey))
     }
 
     public mutating func request(from member: Member) {

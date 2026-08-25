@@ -119,4 +119,13 @@ import Testing
         #expect(room.roomKey == key)
         #expect(room.announce.host == host.id)
     }
+
+    @Test func announceProofNeedsTheRoomKey() {
+        let room = HostRoom(id: 5, name: "r", host: Member(id: NodeID(raw: 1), name: "a"))
+        #expect(room.announce.verifyProof(roomKey: room.roomKey))
+        #expect(!room.announce.verifyProof(roomKey: Data(repeating: 0, count: 32)))
+        var forged = room.announce
+        forged.host = NodeID(raw: 2)
+        #expect(!forged.verifyProof(roomKey: room.roomKey))
+    }
 }
