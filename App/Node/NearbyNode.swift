@@ -111,6 +111,10 @@ final class NearbyNode {
     private var roomKey: RoomKey?
     private var streamPeers: Set<NodeID> = []
     private var started = false
+    /// Room to rejoin after a relaunch, until its announcement is seen or the window closes.
+    private var rejoinRoom: RoomID? = UserDefaults.standard.string(forKey: NearbyNode.rejoinKey).flatMap { RoomID($0) }
+    private let rejoinDeadline = Date().addingTimeInterval(90)
+    private static let rejoinKey = "room.rejoin"
     private var eventTasks: [TransportID: Task<Void, Never>] = [:]
     private var timers: [Task<Void, Never>] = []
 
@@ -478,6 +482,10 @@ final class NearbyNode {
         case .roomAnnounce(let announce):
             roomsSeen[announce.roomID] = (announce, Date())
             refreshRooms()
+            if announce.roomID == rejoinRoom, hosted == nil, joined == nil, joinState != .requested(announce.roomID) {
+                logger.notice("rejoining room \(announce.roomID) after relaunch")
+                requestJoin(announce)
+            }
             if var room = joined, room.id == announce.roomID, room.host != source,
                announce.host == source, announce.verifyProof(roomKey: room.roomKey),
                room.members.contains(where: { $0.id == source }) {
@@ -502,8 +510,12 @@ final class NearbyNode {
             }
 
         case .joinRequest(let request):
-            guard hosted?.id == request.roomID else { return }
-            hosted?.request(from: Member(id: source, name: request.name))
+            guard var room = hosted, room.id == request.roomID else { return }
+            let returning = room.members.contains { $0.id == source }
+            if returning { _ = room.remove(source) }
+            room.request(from: Member(id: source, name: request.name))
+            hosted = room
+            if returning { accept(source) }
 
         case .joinAccept(let accept):
             guard joinState == .requested(accept.roomID) else { return }
@@ -515,6 +527,7 @@ final class NearbyNode {
                 roomKey: accept.roomKey
             )
             joinState = .idle
+            rejoinRoom = nil
             syncRoomKey()
             startCall()
 
@@ -619,6 +632,11 @@ final class NearbyNode {
         refreshPaths(now: now, force: true)
         peers.removeAll { now.timeIntervalSince($0.lastSeen) > Self.peerTimeout }
         evaluateHost()
+        if rejoinRoom != nil, now > rejoinDeadline { rejoinRoom = nil }
+        let currentRoom = (hosted?.id ?? joined?.id).map(String.init)
+        if UserDefaults.standard.string(forKey: Self.rejoinKey) != currentRoom {
+            UserDefaults.standard.set(currentRoom, forKey: Self.rejoinKey)
+        }
         refreshRooms(now: now)
         guard inCall, let audio else { return }
         voiceStats = Dictionary(
@@ -736,13 +754,12 @@ final class NearbyNode {
         hosted = nil
         joined = nil
         joinState = .idle
+        rejoinRoom = nil
+        UserDefaults.standard.removeObject(forKey: Self.rejoinKey)
         stopCall()
     }
 
     // MARK: - Voice
-
-    /// Mic level for UI; sampled by the view, not observed.
-    var inputLevel: Float { audio?.inputLevel ?? 0 }
 
     /// In a call with other members, none of them reachable.
     var disconnected: Bool {
