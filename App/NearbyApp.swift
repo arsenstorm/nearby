@@ -2,9 +2,13 @@ import SwiftUI
 
 @main
 struct NearbyApp: App {
+    @State private var node = NearbyNode()
+
     var body: some Scene {
         WindowGroup {
-            Text("Nearby")
+            RootView()
+                .environment(node)
+                .task { node.start() }
         }
     }
 }
