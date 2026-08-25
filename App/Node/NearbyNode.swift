@@ -160,6 +160,7 @@ final class NearbyNode {
     /// from scratch so stale Bonjour state cannot leave us invisible.
     func resumeFromBackground() {
         guard started else { return }
+        logger.notice("resuming transports after background")
         let now = Date()
         for (id, transport) in transports where transportStates[id]?.enabled == true {
             for link in mesh.allLinks where link.transport == id { mesh.linkDown(link, now: now) }

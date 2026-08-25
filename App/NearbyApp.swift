@@ -5,6 +5,7 @@ struct NearbyApp: App {
     @State private var node = NearbyNode()
     @State private var activity: CallActivityController?
     @Environment(\.scenePhase) private var scenePhase
+    @State private var wasBackgrounded = false
 
     var body: some Scene {
         WindowGroup {
@@ -17,8 +18,15 @@ struct NearbyApp: App {
                     activity = controller
                     controller.start()
                 }
-                .onChange(of: scenePhase) { old, new in
-                    if old == .background, new == .active { node.resumeFromBackground() }
+                .onChange(of: scenePhase) { _, phase in
+                    // Coming back passes through .inactive, so remember the background visit.
+                    switch phase {
+                    case .background: wasBackgrounded = true
+                    case .active where wasBackgrounded:
+                        wasBackgrounded = false
+                        node.resumeFromBackground()
+                    default: break
+                    }
                 }
         }
     }
