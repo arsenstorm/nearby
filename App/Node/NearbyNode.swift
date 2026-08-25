@@ -107,6 +107,7 @@ final class NearbyNode {
     // One counter per member so each receiver's jitter buffer sees contiguous sequences.
     private var voiceSequences: [NodeID: UInt32] = [:]
     private var audio: AudioEngine?
+    private var outgoingVoice: Task<Void, Never>?
     private var roomKey: RoomKey?
     private var streamPeers: Set<NodeID> = []
     private var started = false
@@ -732,9 +733,12 @@ final class NearbyNode {
 
     private func startCall() {
         if audio == nil {
-            // ponytail: one main-actor hop per 20 ms frame; move sealing off the main actor when profiling says so.
-            audio = AudioEngine { [weak self] frame in
-                Task { @MainActor in self?.sendVoice(frame) }
+            // An AsyncStream keeps frames in capture order; a Task per frame would let the main actor
+            // stamp sequence numbers out of order, and the receiver would drop the reordered frames.
+            let (frames, continuation) = AsyncStream.makeStream(of: Data.self)
+            audio = AudioEngine { frame in continuation.yield(frame) }
+            outgoingVoice = Task { @MainActor [weak self] in
+                for await frame in frames { self?.sendVoice(frame) }
             }
         }
         guard let audio else { return }
@@ -751,6 +755,8 @@ final class NearbyNode {
     }
 
     private func stopCall() {
+        outgoingVoice?.cancel()
+        outgoingVoice = nil
         audio?.stop()
         audio = nil
         inCall = false
