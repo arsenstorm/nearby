@@ -25,7 +25,7 @@ jobs:
       ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
       ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # App Manager key: enough for profile management and uploads, not enough
       # to mint cloud-managed certs — the cert comes from the .p12 below.
@@ -81,7 +81,7 @@ jobs:
 
       # One App Store profile per bundle: the app and its Live Activity extension.
       - name: Install app provisioning profile
-        uses: apple-actions/download-provisioning-profiles@v4
+        uses: apple-actions/download-provisioning-profiles@v6
         with:
           bundle-id: com.arsenstorm.nearby
           profile-type: IOS_APP_STORE
@@ -89,7 +89,7 @@ jobs:
           api-key-id: ${{ secrets.ASC_KEY_ID }}
           api-private-key: ${{ secrets.ASC_PRIVATE_KEY }}
       - name: Install extension provisioning profile
-        uses: apple-actions/download-provisioning-profiles@v4
+        uses: apple-actions/download-provisioning-profiles@v6
         with:
           bundle-id: com.arsenstorm.nearby.activity
           profile-type: IOS_APP_STORE
