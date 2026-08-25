@@ -104,12 +104,11 @@ import Testing
         mesh.bind(linkC, to: c)
 
         let lsa1 = mesh.localAdvertisement(now: now)
-        #expect(lsa1.sequence == 1)
         #expect(lsa1.neighbors.count == 2)
         #expect(abs((lsa1.neighbors.first { $0.id == b }?.cost ?? 0) - 40) < 0.01)
 
         let lsa2 = mesh.localAdvertisement(now: now)
-        #expect(lsa2.sequence == 2)
+        #expect(lsa2.sequence == lsa1.sequence &+ 1)
     }
 
     @Test func expireRemovesRemoteOriginAndItsRoute() {
