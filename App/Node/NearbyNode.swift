@@ -14,7 +14,7 @@ struct PeerSummary: Identifiable, Equatable, Sendable {
 struct JoinedRoom: Equatable, Sendable {
     let id: RoomID
     var name: String
-    let host: NodeID
+    var host: NodeID
     var members: [Member]
     var roomKey: Data
 }
@@ -455,6 +455,28 @@ final class NearbyNode {
         case .roomAnnounce(let announce):
             roomsSeen[announce.roomID] = (announce, Date())
             refreshRooms()
+            if var room = joined, room.id == announce.roomID, room.host != source,
+               announce.host == source, announce.verifyProof(roomKey: room.roomKey),
+               room.members.contains(where: { $0.id == source }) {
+                room.host = source
+                joined = room
+                logger.notice("host of room \(room.id) is now \(source.description, privacy: .public)")
+            }
+            if let room = hosted, room.id == announce.roomID, source < nodeID,
+               announce.host == source, announce.verifyProof(roomKey: room.roomKey),
+               room.members.contains(where: { $0.id == source }) {
+                joined = JoinedRoom(
+                    id: room.id,
+                    name: room.name,
+                    host: source,
+                    members: room.members,
+                    roomKey: room.roomKey
+                )
+                hosted = nil
+                syncRoomKey()
+                syncStreams()
+                logger.notice("yielded room \(room.id) to \(source.description, privacy: .public)")
+            }
 
         case .joinRequest(let request):
             guard hosted?.id == request.roomID else { return }
@@ -571,6 +593,7 @@ final class NearbyNode {
         _ = mesh.expire(now: now)
         refreshPaths(now: now, force: true)
         peers.removeAll { now.timeIntervalSince($0.lastSeen) > Self.peerTimeout }
+        evaluateHost()
         refreshRooms(now: now)
         guard inCall, let audio else { return }
         voiceStats = Dictionary(
@@ -598,8 +621,35 @@ final class NearbyNode {
         roomsSeen = roomsSeen.filter { now.timeIntervalSince($0.value.at) <= Self.roomTimeout }
         rooms = roomsSeen.values
             .map(\.announce)
-            .filter { $0.host != nodeID }
+            .filter { $0.host != nodeID && $0.roomID != joined?.id }
             .sorted { $0.name == $1.name ? $0.roomID < $1.roomID : $0.name < $1.name }
+    }
+
+    private func reachableMembers() -> [Member] {
+        currentMembers.filter { member in
+            member.id == nodeID || peers.contains { $0.id == member.id }
+        }
+    }
+
+    /// The lowest reachable member hosts, so a lost host is replaced without a vote.
+    private func evaluateHost() {
+        guard let room = joined,
+              !peers.contains(where: { $0.id == room.host }),
+              nodeID == reachableMembers().map(\.id).min()
+        else { return }
+        let takeover = HostRoom(
+            takingOver: room.id,
+            name: room.name,
+            host: Member(id: nodeID, name: displayName),
+            members: room.members,
+            roomKey: room.roomKey
+        )
+        hosted = takeover
+        joined = nil
+        syncRoomKey()
+        syncStreams()
+        broadcastControl(.roomAnnounce(takeover.announce))
+        logger.notice("took over room \(takeover.id)")
     }
 
     private func announceHostedRoom() {
