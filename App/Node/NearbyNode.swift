@@ -55,6 +55,10 @@ final class NearbyNode {
     private(set) var joinState: JoinState = .idle
     private(set) var keyWarning: PeerKeyWarning?
     private(set) var transportStates: [TransportID: TransportState] = [:]
+    private(set) var inCall = false
+    var muted = false
+    private(set) var voiceStats: [NodeID: JitterBuffer.Stats] = [:]
+    private(set) var ioLatencyMs: Double = 0
 
     private static let displayNameKey = "displayName"
     private static let peerTimeout: TimeInterval = 5
@@ -72,6 +76,10 @@ final class NearbyNode {
     private var dedup = Dedup()
     // Seeded from the clock so a relaunch does not restart below peers' dedup windows.
     private var sequence = UInt32(truncatingIfNeeded: Int64(Date().timeIntervalSince1970 * 50))
+    private var voiceSequence = UInt32(truncatingIfNeeded: Int64(Date().timeIntervalSince1970 * 50))
+    private var audio: AudioEngine?
+    private var roomKey: RoomKey?
+    private var streamPeers: Set<NodeID> = []
     private var started = false
     private var eventTasks: [TransportID: Task<Void, Never>] = [:]
     private var timers: [Task<Void, Never>] = []
@@ -276,7 +284,9 @@ final class NearbyNode {
             receiveHello(packet.payload, from: link)
         case .control:
             receiveControl(packet)
-        case .voice, .probe, .ack, .linkState:
+        case .voice:
+            receiveVoice(packet)
+        case .probe, .ack, .linkState:
             break
         }
     }
@@ -341,6 +351,8 @@ final class NearbyNode {
             joinState = .idle
 
         case .joinReject(let roomID, let reason):
+            syncRoomKey()
+            startCall()
             guard joinState == .requested(roomID) else { return }
             joinState = .rejected(reason)
 
@@ -351,12 +363,17 @@ final class NearbyNode {
             joined = room
 
         case .leave(let roomID):
+            syncRoomKey()
+            syncStreams()
             if let room = joined, room.host == source, room.id == roomID {
                 joined = nil
             } else if var room = hosted, room.id == roomID, let update = room.remove(source) {
                 hosted = room
+                stopCall()
                 for member in room.members where member.id != nodeID {
                     sendControl(update, to: member.id)
+                syncRoomKey()
+                syncStreams()
                 }
             }
         }
@@ -410,6 +427,11 @@ final class NearbyNode {
         refreshRooms(now: now)
     }
 
+        guard inCall, let audio else { return }
+        voiceStats = Dictionary(
+            uniqueKeysWithValues: streamPeers.compactMap { id in audio.stats(for: id).map { (id, $0) } }
+        )
+        ioLatencyMs = audio.ioLatencyMs
     func trustKeyChange() {
         guard let warning = keyWarning else { return }
         if let record = try? peerStore.trust(warning.hello, now: Date()) {
@@ -447,6 +469,8 @@ final class NearbyNode {
         joined = nil
     }
 
+        syncRoomKey()
+        startCall()
     func closeRoom() {
         guard let hosted else { return }
         for member in hosted.members where member.id != nodeID {
@@ -455,6 +479,7 @@ final class NearbyNode {
         self.hosted = nil
     }
 
+        stopCall()
     func requestJoin(_ room: RoomAnnounce) {
         sendControl(
             .joinRequest(JoinRequest(roomID: room.roomID, name: displayName, codeProof: nil)),
@@ -468,6 +493,8 @@ final class NearbyNode {
         hosted = room
         sendControl(.joinAccept(accept), to: id)
         for member in room.members where member.id != nodeID && member.id != id {
+        syncRoomKey()
+        syncStreams()
             sendControl(
                 .memberList(roomID: room.id, members: room.members, roomKey: room.roomKey),
                 to: member.id
@@ -487,3 +514,73 @@ final class NearbyNode {
         joinState = .idle
     }
 }
+        stopCall()
+    }
+
+    // MARK: - Voice
+
+    private var currentMembers: [Member] { hosted?.members ?? joined?.members ?? [] }
+
+    private func syncRoomKey() {
+        roomKey = (hosted?.roomKey ?? joined?.roomKey).flatMap { try? RoomKey(data: $0) }
+    }
+
+    private func startCall() {
+        if audio == nil {
+            // ponytail: one main-actor hop per 20 ms frame; move sealing off the main actor when profiling says so.
+            audio = AudioEngine { [weak self] frame in
+                Task { @MainActor in self?.sendVoice(frame) }
+            }
+        }
+        guard let audio else { return }
+        do {
+            try audio.start()
+        } catch {
+            // Kept alive on failure so a route change can retry through the engine's own observers.
+            logger.error("audio start failed: \(error.localizedDescription, privacy: .public)")
+        }
+        inCall = true
+        ioLatencyMs = audio.ioLatencyMs
+        syncStreams()
+    }
+
+    private func stopCall() {
+        audio?.stop()
+        audio = nil
+        inCall = false
+        voiceStats = [:]
+        streamPeers = []
+        roomKey = nil
+    }
+
+    private func syncStreams() {
+        let wanted = Set(currentMembers.map(\.id)).subtracting([nodeID])
+        for id in wanted.subtracting(streamPeers) { audio?.addStream(id) }
+        for id in streamPeers.subtracting(wanted) { audio?.removeStream(id) }
+        streamPeers = wanted
+    }
+
+    private func nextVoiceSequence() -> UInt32 {
+        voiceSequence &+= 1
+        return voiceSequence
+    }
+
+    /// Broadcast: every neighbour gets the frame once and non-members cannot open it. Per-member mesh routing arrives in a later phase.
+    private func sendVoice(_ frame: Data) {
+        guard inCall, !muted, let roomKey else { return }
+        let header = PacketHeader(
+            type: .voice, source: nodeID, destination: .broadcast,
+            stream: 1, sequence: nextVoiceSequence()
+        )
+        guard let sealed = try? roomKey.seal(frame, header: header) else { return }
+        let data = Packet(header: header, payload: sealed).encode()
+        for link in sendableLinks { transmit(data, over: link) }
+    }
+
+    private func receiveVoice(_ packet: Packet) {
+        let header = packet.header
+        guard inCall, let roomKey, currentMembers.contains(where: { $0.id == header.source })
+        else { return }
+        // Silent drop covers the rotation window where the sender still holds the previous room key.
+        guard let frame = try? roomKey.open(packet.payload, header: header) else { return }
+        audio?.push(header.source, sequence: header.sequence, frame: frame)

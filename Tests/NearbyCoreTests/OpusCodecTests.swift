@@ -17,7 +17,7 @@ import Testing
             }
             let packet = try input.withUnsafeMutableBufferPointer { try encoder.encode($0) }
             packetSizes.append(packet.count)
-            try output.withUnsafeMutableBufferPointer { try decoder.decode(packet, into: $0) }
+            _ = try output.withUnsafeMutableBufferPointer { try decoder.decode(packet, into: $0) }
             lastEnergy = output.reduce(0) { $0 + $1 * $1 } / Float(Opus.frameSamples)
         }
         #expect(packetSizes.allSatisfy { $0 > 10 && $0 < 200 })
