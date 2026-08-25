@@ -8,17 +8,28 @@
 
 /* Begin PBXBuildFile section */
 		A1000001 /* NearbyCore in Frameworks */ = {isa = PBXBuildFile; productRef = A1000002 /* NearbyCore */; };
+		B1000001 /* NearbyActivity.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = B1000003 /* NearbyActivity.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		A1000003 /* Nearby.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Nearby.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B1000003 /* NearbyActivity.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = NearbyActivity.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		A1000004 /* App */ = {isa = PBXFileSystemSynchronizedRootGroup; path = App; sourceTree = "<group>"; };
+		B1000004 /* Activity */ = {isa = PBXFileSystemSynchronizedRootGroup; path = Activity; sourceTree = "<group>"; };
+		B1000014 /* Shared */ = {isa = PBXFileSystemSynchronizedRootGroup; path = Shared; sourceTree = "<group>"; };
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		B1000005 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		A1000005 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -34,6 +45,8 @@
 			isa = PBXGroup;
 			children = (
 				A1000004 /* App */,
+				B1000004 /* Activity */,
+				B1000014 /* Shared */,
 				A1000007 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -42,6 +55,7 @@
 			isa = PBXGroup;
 			children = (
 				A1000003 /* Nearby.app */,
+				B1000003 /* NearbyActivity.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -56,13 +70,16 @@
 				A100000A /* Sources */,
 				A1000005 /* Frameworks */,
 				A100000B /* Resources */,
+				B100000E /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				B1000010 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				A1000004 /* App */,
+				B1000014 /* Shared */,
 			);
 			name = Nearby;
 			packageProductDependencies = (
@@ -72,7 +89,60 @@
 			productReference = A1000003 /* Nearby.app */;
 			productType = "com.apple.product-type.application";
 		};
+		B1000008 /* NearbyActivity */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B1000009 /* Build configuration list for PBXNativeTarget "NearbyActivity" */;
+			buildPhases = (
+				B100000A /* Sources */,
+				B1000005 /* Frameworks */,
+				B100000B /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				B1000004 /* Activity */,
+				B1000014 /* Shared */,
+			);
+			name = NearbyActivity;
+			productName = NearbyActivity;
+			productReference = B1000003 /* NearbyActivity.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		B100000E /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				B1000001 /* NearbyActivity.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXContainerItemProxy section */
+		B100000F /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A100000C /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = B1000008;
+			remoteInfo = NearbyActivity;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXTargetDependency section */
+		B1000010 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = B1000008 /* NearbyActivity */;
+			targetProxy = B100000F /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin PBXProject section */
 		A100000C /* Project object */ = {
@@ -105,6 +175,7 @@
 			projectRoot = "";
 			targets = (
 				A1000008 /* Nearby */,
+				B1000008 /* NearbyActivity */,
 			);
 		};
 /* End PBXProject section */
@@ -117,10 +188,24 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		B100000B /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		A100000A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B100000A /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -233,6 +318,54 @@
 			};
 			name = Release;
 		};
+		B1000011 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = K667TL7H29;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "Config/Activity-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.shkrumelyak.nearby.activity;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "NEARBY_EXTENSION $(inherited)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		B1000012 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = K667TL7H29;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "Config/Activity-Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.shkrumelyak.nearby.activity;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "NEARBY_EXTENSION $(inherited)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -250,6 +383,15 @@
 			buildConfigurations = (
 				A100000F /* Debug */,
 				A1000010 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B1000009 /* Build configuration list for PBXNativeTarget "NearbyActivity" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B1000011 /* Debug */,
+				B1000012 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

@@ -57,6 +57,9 @@ struct PacketCounters: Equatable, Sendable {
 /// Owns identity, transports, peers, and room state. All UI reads go through this object.
 @MainActor @Observable
 final class NearbyNode {
+    /// The app's node, for Live Activity intents that run in the app process.
+    static weak var current: NearbyNode?
+
     var displayName: String {
         get { storedDisplayName }
         set {
@@ -134,6 +137,7 @@ final class NearbyNode {
                 linkCount: 0
             )
         }
+        Self.current = self
     }
 
     // MARK: - Lifecycle
@@ -703,6 +707,12 @@ final class NearbyNode {
         guard let roomID = hosted?.id else { return }
         hosted?.reject(id)
         sendControl(.joinReject(roomID: roomID, reason: "Declined"), to: id)
+    }
+
+    func toggleMute() { muted.toggle() }
+
+    func leaveOrClose() {
+        if hosted != nil { closeRoom() } else { leaveRoom() }
     }
 
     func leaveRoom() {
