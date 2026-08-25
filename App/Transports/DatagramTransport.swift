@@ -56,6 +56,14 @@ final class DatagramTransport: Transport, @unchecked Sendable {
                     }
                     self.browser = browser
 
+                    // Both die for good on failure (e.g. the interface went away); rebuild after a beat.
+                    listener.stateUpdateHandler = { [weak self] state in
+                        if case .failed = state { self?.scheduleRestart() }
+                    }
+                    browser.stateUpdateHandler = { [weak self] state in
+                        if case .failed = state { self?.scheduleRestart() }
+                    }
+
                     listener.start(queue: queue)
                     browser.start(queue: queue)
                     cont.resume()
@@ -66,16 +74,47 @@ final class DatagramTransport: Transport, @unchecked Sendable {
         }
     }
 
+    private var restartScheduled = false
+
+    private func scheduleRestart() {
+        guard !restartScheduled else { return }
+        restartScheduled = true
+        queue.asyncAfter(deadline: .now() + 1) { [weak self] in
+            guard let self else { return }
+            self.restartScheduled = false
+            Task {
+                await self.stop()
+                try? await self.start()
+            }
+        }
+    }
+
+    private func dial(_ result: NWBrowser.Result) {
+        // Bonjour renames a stale re-registration of our own service to "<name> (2)"; never dial ourselves.
+        guard case .service(let name, _, _, _) = result.endpoint, !name.hasPrefix(serviceName) else { return }
+        // Only the lexicographically smaller name dials, so each pair opens one connection instead of two.
+        guard serviceName < name else { return }
+        adopt(NWConnection(to: result.endpoint, using: params), endpoint: name)
+    }
+
+    /// A failed outbound link is not re-added by the browser, so dial it again while the service is still advertised.
+    private func redialLater(_ link: LinkID) {
+        queue.asyncAfter(deadline: .now() + 1) { [weak self] in
+            guard let self, self.links[link] == nil,
+                  let result = self.browser?.browseResults.first(where: {
+                      if case .service(let name, _, _, _) = $0.endpoint { return name == link.endpoint }
+                      return false
+                  })
+            else { return }
+            self.dial(result)
+        }
+    }
+
     private func handleBrowseChanges(_ changes: Set<NWBrowser.Result.Change>) {
         for change in changes {
             switch change {
             case .added(let result):
-                // Bonjour renames a stale re-registration of our own service to "<name> (2)"; never dial ourselves.
-                guard case .service(let name, _, _, _) = result.endpoint, !name.hasPrefix(serviceName) else { continue }
-                // Only the lexicographically smaller name dials, so each pair opens one connection instead of two.
-                guard serviceName < name else { continue }
-                let connection = NWConnection(to: result.endpoint, using: params)
-                adopt(connection, endpoint: name)
+                dial(result)
             case .removed(let result):
                 guard case .service(let name, _, _, _) = result.endpoint else { continue }
                 let link = LinkID(transport: id, endpoint: name)
@@ -113,6 +152,7 @@ final class DatagramTransport: Transport, @unchecked Sendable {
             if readyLinks.remove(link) != nil {
                 continuation.yield(.linkDown(link))
             }
+            if case .failed = state, !link.endpoint.hasPrefix("in:") { redialLater(link) }
         default:
             break
         }
