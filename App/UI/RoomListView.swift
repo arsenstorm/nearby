@@ -7,22 +7,22 @@ struct RoomListView: View {
     @State private var showRoomSettings = false
 
     var body: some View {
-        VStack(spacing: 32) {
+        VStack(spacing: 40) {
             StatusDot(
                 state: node.peers.isEmpty ? .idle : .live,
                 caption: node.peers.isEmpty ? "Looking for people nearby" : "\(node.peers.count) nearby"
             )
-            .padding(.top, 48)
+            .padding(.top, 96)
             HStack(spacing: 12) {
                 Button { node.hostRoom(name: roomName) } label: {
                     Text("Start a room").frame(maxWidth: .infinity).padding(.vertical, 8)
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.glassProminent)
                 .disabled(roomName.trimmingCharacters(in: .whitespaces).isEmpty)
                 Button { showRoomSettings = true } label: {
                     Image(systemName: "slider.horizontal.3").padding(.vertical, 8)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.glass)
             }
             nearbyRooms
             Spacer()
@@ -46,8 +46,8 @@ struct RoomListView: View {
     private var nearbyRooms: some View {
         if node.rooms.isEmpty {
             Text("Nobody nearby has started a room yet.")
-                .font(.footnote)
-                .foregroundStyle(.tertiary)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
         } else {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Nearby rooms").font(.headline)
@@ -64,14 +64,14 @@ struct RoomListView: View {
                         if node.joinState == .requested(room.roomID) {
                             ProgressView()
                         } else {
-                            Button("Join") { node.requestJoin(room) }.buttonStyle(.bordered)
+                            Button("Join") { node.requestJoin(room) }.buttonStyle(.glass)
                         }
                     }
                 }
             }
             .padding()
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.fill.tertiary, in: RoundedRectangle(cornerRadius: 16))
+            .glassEffect(in: .rect(cornerRadius: 24))
         }
     }
 

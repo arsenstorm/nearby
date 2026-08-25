@@ -8,9 +8,9 @@ struct RoomView: View {
         @Bindable var node = node
         let members = node.hosted?.members ?? node.joined?.members ?? []
 
-        VStack(spacing: 32) {
+        VStack(spacing: 40) {
             StatusDot(state: dotState, caption: caption, level: { node.inputLevel })
-                .padding(.top, 48)
+                .padding(.top, 96)
 
             if let pending = node.hosted?.pending, !pending.isEmpty {
                 card("Wants to join") {
@@ -18,8 +18,8 @@ struct RoomView: View {
                         HStack {
                             Text(member.name)
                             Spacer()
-                            Button("Accept") { node.accept(member.id) }.buttonStyle(.borderedProminent)
-                            Button("Decline") { node.reject(member.id) }.buttonStyle(.bordered)
+                            Button("Accept") { node.accept(member.id) }.buttonStyle(.glassProminent)
+                            Button("Decline") { node.reject(member.id) }.buttonStyle(.glass)
                         }
                     }
                 }
@@ -38,12 +38,13 @@ struct RoomView: View {
                     Label(node.muted ? "Unmute" : "Mute", systemImage: node.muted ? "mic.slash.fill" : "mic.fill")
                         .frame(maxWidth: .infinity).padding(.vertical, 8)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.glass)
                 Button(role: .destructive) { node.leaveOrClose() } label: {
                     Text(node.hosted != nil ? "Close room" : "Leave")
                         .frame(maxWidth: .infinity).padding(.vertical, 8)
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.glassProminent)
+                .tint(.red)
             }
         }
         .frame(maxWidth: 340)
@@ -72,6 +73,6 @@ struct RoomView: View {
         }
         .padding()
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.background.opacity(0.6), in: RoundedRectangle(cornerRadius: 16))
+        .glassEffect(in: .rect(cornerRadius: 24))
     }
 }
