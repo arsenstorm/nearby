@@ -40,6 +40,9 @@ final class CallActivityController {
             _ = node.joined?.name
             _ = node.joined?.id
             _ = node.joined?.members.count
+            _ = node.hosted?.members.map(\.name)
+            _ = node.joined?.members.map(\.name)
+            _ = node.disconnected
         } onChange: { [weak self] in
             Task { @MainActor in
                 guard let self else { return }
@@ -60,10 +63,23 @@ final class CallActivityController {
         }
         let startedAt = callStartedAt ?? Date()
         callStartedAt = startedAt
+        let members = node.hosted?.members ?? node.joined?.members ?? []
+        let others = members.filter { $0.id != node.nodeID }
+        let title: String
+        if node.disconnected { title = "Connection lost" }
+        else if node.muted { title = "You're muted" }
+        else {
+            switch others.count {
+            case 0: title = "Waiting for people"
+            case 1: title = "Talking with \(others[0].name)"
+            default: title = "Talking with \(others.count) people"
+            }
+        }
         let state = CallActivityAttributes.ContentState(
-            roomName: node.hosted?.name ?? node.joined?.name ?? "Call",
-            memberCount: (node.hosted?.members ?? node.joined?.members ?? []).count,
+            title: title,
+            subtitle: "\(members.count) in the room ·",
             muted: node.muted,
+            disconnected: node.disconnected,
             startedAt: startedAt
         )
         guard state != lastState else { return }
