@@ -49,8 +49,8 @@ while in a room.
 
 ## URLs
 
-- **Privacy Policy URL:** host `privacy-policy.md` (placeholder until hosted)
-- **Support URL:** `mailto:arsen@shkrumelyak.com` or a simple page
+- **Privacy Policy URL:** https://nearby.arsenstorm.com/privacy (served from `web/`, deploy with `cd web && bunx wrangler deploy`)
+- **Support URL:** https://nearby.arsenstorm.com/support
 
 ## Export compliance
 

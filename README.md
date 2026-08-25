@@ -11,6 +11,7 @@ network, Wi‑Fi Aware or Bluetooth, with no server and no account.
 - `Shared` — types shared between app and extension
 - `scripts` — build, install and release helpers
 - `docs/app-store` — App Store Connect checklist, privacy policy and review notes
+- `web` — nearby.arsenstorm.com: landing, privacy and support pages (static Cloudflare Worker)
 
 ## Run
 
