@@ -19,7 +19,16 @@ final class BLETransport: NSObject, Transport, @unchecked Sendable {
     let id: TransportID = .ble
     let events: AsyncStream<TransportEvent>
 
-    var isSupported: Bool { queue.sync { centralState != .unsupported } }
+    var isSupported: Bool {
+        #if targetEnvironment(simulator)
+        false
+        #else
+        queue.sync { centralState != .unsupported }
+        #endif
+    }
+
+    /// start() waits for the first central state so "unsupported" surfaces as a thrown error.
+    private var pendingStart: CheckedContinuation<Void, Error>?
 
     private struct Remote {
         var name: String?
@@ -62,16 +71,17 @@ final class BLETransport: NSObject, Transport, @unchecked Sendable {
                 running = true
                 startChannelThread()
 
-                if central == nil {
-                    central = CBCentralManager(delegate: self, queue: queue)
-                } else if central?.state == .poweredOn {
-                    startScanning()
-                }
                 if peripheralManager == nil {
                     peripheralManager = CBPeripheralManager(delegate: self, queue: queue)
                 } else if peripheralManager?.state == .poweredOn {
                     startPublishing()
                 }
+                if central == nil {
+                    pendingStart = cont
+                    central = CBCentralManager(delegate: self, queue: queue)
+                    return
+                }
+                if central?.state == .poweredOn { startScanning() }
                 cont.resume()
             }
         }
@@ -254,6 +264,15 @@ extension BLETransport: CBPeripheralManagerDelegate {
 extension BLETransport: CBCentralManagerDelegate {
     func centralManagerDidUpdateState(_ manager: CBCentralManager) {
         centralState = manager.state
+        if let pending = pendingStart, manager.state != .unknown {
+            pendingStart = nil
+            if manager.state == .unsupported {
+                running = false
+                pending.resume(throwing: BLETransportError.bluetoothUnsupported)
+                return
+            }
+            pending.resume()
+        }
         guard manager.state == .poweredOn, running else { return }
         startScanning()
     }

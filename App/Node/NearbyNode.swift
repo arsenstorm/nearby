@@ -207,6 +207,10 @@ final class NearbyNode {
                 transportStates[id]?.active = true
             } catch {
                 logger.error("\(id.rawValue, privacy: .public) start failed: \(error.localizedDescription, privacy: .public)")
+                if !transport.isSupported {
+                    transportStates[id]?.supported = false
+                    transportStates[id]?.enabled = false
+                }
             }
         }
     }
