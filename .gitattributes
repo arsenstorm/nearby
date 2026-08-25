@@ -1,0 +1,5 @@
+# See https://git-scm.com/docs/gitattributes for more about gitattributes files.
+
+# Xcode's project file is machine-maintained; keep it out of language stats and diffs.
+*.pbxproj linguist-generated merge=union
+Package.resolved linguist-generated

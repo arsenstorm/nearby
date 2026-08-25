@@ -1,6 +1,15 @@
 .DS_Store
 .build/
+.swiftpm/
 xcuserdata/
 *.xcuserstate
 DerivedData/
 build/
+*.xcarchive
+
+# Signing material never belongs in the repo.
+*.p8
+*.p12
+*.mobileprovision
+.env
+!.env.example

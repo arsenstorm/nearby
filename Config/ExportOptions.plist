@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!-- Used by scripts/deploy.sh and release-ios.yml: exportArchive options that
+     upload the build straight to App Store Connect. Signing is MANUAL on
+     purpose: with an ASC API key in play, automatic signing insists on the
+     cloud-managed cert (needs an Admin key we don't grant). The cert comes
+     from the keychain; the profiles are fetched by name via the API key. -->
+<dict>
+	<key>method</key>
+	<string>app-store-connect</string>
+	<key>destination</key>
+	<string>upload</string>
+	<key>signingStyle</key>
+	<string>manual</string>
+	<key>signingCertificate</key>
+	<string>Apple Distribution</string>
+	<key>teamID</key>
+	<string>K667TL7H29</string>
+	<key>provisioningProfiles</key>
+	<dict>
+		<key>com.arsenstorm.nearby</key>
+		<string>Nearby App Store</string>
+		<key>com.arsenstorm.nearby.activity</key>
+		<string>Nearby Activity App Store</string>
+	</dict>
+</dict>
+</plist>

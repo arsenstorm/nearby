@@ -1,0 +1,50 @@
+name: Bug report
+description: Report something that isn't working as expected.
+labels: [bug, triage]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps to reproduce the behavior.
+      placeholder: |
+        1. Start a room on phone A
+        2. Join from phone B over '...'
+        3. See error
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Affected surface
+      options:
+        - Discovery (Bonjour / Wi-Fi Aware / Bluetooth)
+        - Rooms / joining / host handover
+        - Audio (capture, playback, echo)
+        - Live Activity / Dynamic Island
+        - UI
+        - Build / tooling
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: devices
+    attributes:
+      label: Devices and iOS versions
+      placeholder: iPhone 17 Pro (iOS 26.1) ↔ iPhone 15 (iOS 26.0)
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Logs (Settings → Advanced), screenshots, or anything else that helps.
+    validations:
+      required: false
