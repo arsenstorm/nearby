@@ -21,7 +21,6 @@ final class AudioEngine: @unchecked Sendable {
         var streams: [NodeID: Stream] = [:]
         var targetDepth = 3
         var running = false
-        var inputLevel: Float = 0
     }
 
     private let onFrame: @Sendable (Data) -> Void
@@ -53,9 +52,6 @@ final class AudioEngine: @unchecked Sendable {
     }
 
     var isRunning: Bool { shared.withLock { $0.running } }
-
-    /// RMS of the latest captured buffer, 0...1.
-    var inputLevel: Float { shared.withLock { $0.inputLevel } }
 
     var ioLatencyMs: Double {
         guard isRunning else { return 0 }
@@ -232,13 +228,6 @@ final class AudioEngine: @unchecked Sendable {
             return source
         }
         guard error == nil, let samples = converted.floatChannelData?[0] else { return }
-        let n = Int(converted.frameLength)
-        if n > 0 {
-            var sum: Float = 0
-            for i in 0..<n { sum += samples[i] * samples[i] }
-            let rms = (sum / Float(n)).squareRoot()
-            shared.withLock { $0.inputLevel = rms }
-        }
         accumulator.append(contentsOf: UnsafeBufferPointer(start: samples, count: Int(converted.frameLength)))
 
         while accumulator.count >= Opus.frameSamples {
