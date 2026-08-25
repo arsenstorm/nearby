@@ -159,6 +159,13 @@ final class AudioEngine: @unchecked Sendable {
             guard let self, !self.engine.isRunning else { return }
             self.restart()
         })
+        // Enabling voice processing reconfigures the I/O unit right after start; the engine stops itself and
+        // stays stopped unless restarted from here.
+        observers.append(center.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil
+        ) { [weak self] _ in
+            self?.restart()
+        })
     }
 
     private func restart() {
