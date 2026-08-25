@@ -18,7 +18,7 @@ struct LeaveCallIntent: LiveActivityIntent {
 
     func perform() async throws -> some IntentResult {
         #if !NEARBY_EXTENSION
-        await MainActor.run { NearbyNode.current?.leaveOrClose() }
+        await MainActor.run { NearbyNode.current?.leaveRoom() }
         #endif
         return .result()
     }

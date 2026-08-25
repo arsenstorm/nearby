@@ -531,9 +531,11 @@ final class NearbyNode {
             syncStreams()
 
         case .leave(let roomID):
-            if let room = joined, room.host == source, room.id == roomID {
-                joined = nil
-                stopCall()
+            if var room = joined, room.host == source, room.id == roomID {
+                room.members.removeAll { $0.id == source }
+                joined = room
+                syncStreams()
+                evaluateHost()
             } else if var room = hosted, room.id == roomID, let update = room.remove(source) {
                 hosted = room
                 syncRoomKey()
@@ -656,10 +658,10 @@ final class NearbyNode {
 
     /// The lowest reachable member hosts, so a lost host is replaced without a vote.
     private func evaluateHost() {
-        guard let room = joined,
-              !peers.contains(where: { $0.id == room.host }),
-              nodeID == reachableMembers().map(\.id).min()
-        else { return }
+        guard let room = joined else { return }
+        let hostGone = !room.members.contains { $0.id == room.host }
+            || !peers.contains { $0.id == room.host }
+        guard hostGone, nodeID == reachableMembers().map(\.id).min() else { return }
         let takeover = HostRoom(
             takingOver: room.id,
             name: room.name,
@@ -691,14 +693,6 @@ final class NearbyNode {
         startCall()
     }
 
-    func closeRoom() {
-        guard let hosted else { return }
-        for member in hosted.members where member.id != nodeID {
-            sendControl(.leave(roomID: hosted.id), to: member.id)
-        }
-        self.hosted = nil
-        stopCall()
-    }
 
     func requestJoin(_ room: RoomAnnounce) {
         sendControl(
@@ -730,12 +724,16 @@ final class NearbyNode {
 
     func toggleMute() { muted.toggle() }
 
-    func leaveOrClose() {
-        if hosted != nil { closeRoom() } else { leaveRoom() }
-    }
-
+    /// Leaving as host does not end the room: members drop the host and elect a new one.
     func leaveRoom() {
-        if let joined { sendControl(.leave(roomID: joined.id), to: joined.host) }
+        if let hosted {
+            for member in hosted.members where member.id != nodeID {
+                sendControl(.leave(roomID: hosted.id), to: member.id)
+            }
+        } else if let joined {
+            sendControl(.leave(roomID: joined.id), to: joined.host)
+        }
+        hosted = nil
         joined = nil
         joinState = .idle
         stopCall()
