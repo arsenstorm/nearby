@@ -6,8 +6,6 @@ struct StatusDot: View {
     enum State { case idle, live, muted, disconnected }
     let state: State
     var searching = false
-    /// 0...1; drives the pulse when live.
-    var level: () -> Float = { 0 }
 
     private let size: CGFloat = 72
     private let period: TimeInterval = 2.4
@@ -15,7 +13,8 @@ struct StatusDot: View {
     var body: some View {
         TimelineView(.animation(paused: state != .live && !searching)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
-            let speech = state == .live ? CGFloat(min(level() * 4, 1)) : 0
+            // Slow breathing so a call looks alive.
+            let breath = state == .live ? CGFloat(0.5 + 0.5 * sin(t * 2 * .pi / 2.4)) * 0.12 : 0
             ZStack {
                 if searching {
                     ForEach(0..<3, id: \.self) { i in
@@ -27,7 +26,7 @@ struct StatusDot: View {
                 }
                 Circle()
                     .fill(color.opacity(0.18))
-                    .scaleEffect(1.25 + speech * 0.45)
+                    .scaleEffect(1.25 + breath)
                 Circle()
                     .fill(
                         RadialGradient(
@@ -48,7 +47,7 @@ struct StatusDot: View {
             }
             .frame(width: size, height: size)
             .padding(size * 0.7)
-            .animation(.easeOut(duration: 0.12), value: speech)
+            .animation(.easeInOut(duration: 0.35), value: state)
         }
         .accessibilityHidden(true)
     }
