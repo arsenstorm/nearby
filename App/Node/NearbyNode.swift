@@ -725,6 +725,15 @@ final class NearbyNode {
 
     // MARK: - Voice
 
+    /// Mic level for UI; sampled by the view, not observed.
+    var inputLevel: Float { audio?.inputLevel ?? 0 }
+
+    /// In a call with other members, none of them reachable.
+    var disconnected: Bool {
+        let others = currentMembers.filter { $0.id != nodeID }
+        return inCall && !others.isEmpty && !others.contains { pathInfo[$0.id] != nil }
+    }
+
     private var currentMembers: [Member] { hosted?.members ?? joined?.members ?? [] }
 
     private func syncRoomKey() {

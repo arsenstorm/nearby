@@ -6,66 +6,72 @@ struct RoomView: View {
 
     var body: some View {
         @Bindable var node = node
+        let members = node.hosted?.members ?? node.joined?.members ?? []
 
-        List {
-            if let hosted = node.hosted {
-                if !hosted.pending.isEmpty {
-                    Section("Requests") {
-                        ForEach(hosted.pending, id: \.id) { member in
-                            HStack {
-                                Text(member.name)
-                                Spacer()
-                                Button("Accept") { node.accept(member.id) }
-                                Button("Decline", role: .destructive) { node.reject(member.id) }
-                            }
-                            .buttonStyle(.borderless)
+        VStack(spacing: 32) {
+            StatusDot(state: dotState, caption: caption, level: { node.inputLevel })
+                .padding(.top, 48)
+
+            if let pending = node.hosted?.pending, !pending.isEmpty {
+                card("Wants to join") {
+                    ForEach(pending, id: \.id) { member in
+                        HStack {
+                            Text(member.name)
+                            Spacer()
+                            Button("Accept") { node.accept(member.id) }.buttonStyle(.borderedProminent)
+                            Button("Decline") { node.reject(member.id) }.buttonStyle(.bordered)
                         }
                     }
                 }
-
-                callSection
-
-                membersSection(hosted.members)
-
-                Section {
-                    Button("Close room", role: .destructive) { node.closeRoom() }
-                }
-            } else if let joined = node.joined {
-                callSection
-
-                membersSection(joined.members)
-
-                Section {
-                    Button("Leave room", role: .destructive) { node.leaveRoom() }
-                }
             }
-        }
-        .navigationTitle(node.hosted?.name ?? node.joined?.name ?? "Room")
-    }
 
-    private var callSection: some View {
-        @Bindable var node = node
-
-        return Section("Call") {
-            Toggle("Mute", isOn: $node.muted)
-            Text(node.inCall ? "Voice on · I/O \(Int(node.ioLatencyMs)) ms" : "Voice off")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private func membersSection(_ members: [Member]) -> some View {
-        Section("Members") {
-            ForEach(members, id: \.id) { member in
-                VStack(alignment: .leading) {
+            card(node.hosted?.name ?? node.joined?.name ?? "Room") {
+                ForEach(members, id: \.id) { member in
                     Text(member.id == node.nodeID ? "\(member.name) (you)" : member.name)
-                    if member.id != node.nodeID, let stats = node.voiceStats[member.id] {
-                        Text("played \(stats.played) · missing \(stats.missing) · late \(stats.late)")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
                 }
             }
+
+            Spacer()
+
+            HStack(spacing: 12) {
+                Button { node.muted.toggle() } label: {
+                    Label(node.muted ? "Unmute" : "Mute", systemImage: node.muted ? "mic.slash.fill" : "mic.fill")
+                        .frame(maxWidth: .infinity).padding(.vertical, 8)
+                }
+                .buttonStyle(.bordered)
+                Button(role: .destructive) { node.leaveOrClose() } label: {
+                    Text(node.hosted != nil ? "Close room" : "Leave")
+                        .frame(maxWidth: .infinity).padding(.vertical, 8)
+                }
+                .buttonStyle(.borderedProminent)
+            }
         }
+        .frame(maxWidth: 340)
+        .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.green.opacity(0.18).ignoresSafeArea())
+        .toolbarTitleDisplayMode(.inline)
+    }
+
+    private var dotState: StatusDot.State {
+        if node.disconnected { return .disconnected }
+        if node.muted { return .muted }
+        return node.inCall ? .live : .idle
+    }
+
+    private var caption: String {
+        if node.disconnected { return "Reconnecting…" }
+        if node.muted { return "Muted" }
+        return node.inCall ? "Live" : "Connecting…"
+    }
+
+    private func card<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title).font(.headline)
+            content()
+        }
+        .padding()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.background.opacity(0.6), in: RoundedRectangle(cornerRadius: 16))
     }
 }

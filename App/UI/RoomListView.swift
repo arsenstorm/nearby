@@ -8,7 +8,11 @@ struct RoomListView: View {
 
     var body: some View {
         VStack(spacing: 32) {
-            status
+            StatusDot(
+                state: node.peers.isEmpty ? .idle : .live,
+                caption: node.peers.isEmpty ? "Looking for people nearby" : "\(node.peers.count) nearby"
+            )
+            .padding(.top, 48)
             HStack(spacing: 12) {
                 Button { node.hostRoom(name: roomName) } label: {
                     Text("Start a room").frame(maxWidth: .infinity).padding(.vertical, 8)
@@ -21,9 +25,12 @@ struct RoomListView: View {
                 .buttonStyle(.bordered)
             }
             nearbyRooms
+            Spacer()
         }
+        .frame(maxWidth: 340)
         .padding()
-        .navigationTitle("Nearby")
+        .frame(maxWidth: .infinity)
+        .toolbarTitleDisplayMode(.inline)
         .task { if roomName.isEmpty { roomName = "\(node.displayName)'s room" } }
         .sheet(isPresented: $showRoomSettings) {
             NavigationStack {
@@ -35,31 +42,18 @@ struct RoomListView: View {
         }
     }
 
-    private var status: some View {
-        let active = node.transportStates.values.contains { $0.active }
-        return VStack(spacing: 8) {
-            Circle()
-                .fill(!active ? .gray : node.peers.isEmpty ? .orange : .green)
-                .frame(width: 56, height: 56)
-            Text(!active ? "Offline" : node.peers.isEmpty ? "Looking for people nearby" : "\(node.peers.count) nearby")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-        }
-        .padding(.top, 24)
-    }
-
+    @ViewBuilder
     private var nearbyRooms: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Nearby rooms").font(.headline)
-            if case .rejected(let reason) = node.joinState {
-                Text("Join declined: \(reason)").font(.footnote).foregroundStyle(.red)
-            }
-            if node.rooms.isEmpty {
-                Text("Nobody nearby has started a room yet.")
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.vertical, 24)
-            } else {
+        if node.rooms.isEmpty {
+            Text("Nobody nearby has started a room yet.")
+                .font(.footnote)
+                .foregroundStyle(.tertiary)
+        } else {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Nearby rooms").font(.headline)
+                if case .rejected(let reason) = node.joinState {
+                    Text("Join declined: \(reason)").font(.footnote).foregroundStyle(.red)
+                }
                 ForEach(node.rooms, id: \.roomID) { room in
                     HStack {
                         VStack(alignment: .leading) {
@@ -75,11 +69,10 @@ struct RoomListView: View {
                     }
                 }
             }
-            Spacer(minLength: 0)
+            .padding()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.fill.tertiary, in: RoundedRectangle(cornerRadius: 16))
         }
-        .padding()
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(.fill.tertiary, in: RoundedRectangle(cornerRadius: 16))
     }
 
     private func hostName(of room: RoomAnnounce) -> String {
