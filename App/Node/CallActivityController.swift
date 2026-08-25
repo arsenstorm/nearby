@@ -58,7 +58,7 @@ final class CallActivityController {
             lastState = nil
             guard let activity else { return }
             self.activity = nil
-            Task { await activity.end(nil, dismissalPolicy: .immediate) }
+            Task { @MainActor in await activity.end(nil, dismissalPolicy: .immediate) }
             return
         }
         let startedAt = callStartedAt ?? Date()
@@ -85,7 +85,7 @@ final class CallActivityController {
         guard state != lastState else { return }
         if let activity {
             lastState = state
-            Task { await activity.update(ActivityContent(state: state, staleDate: nil)) }
+            Task { @MainActor in await activity.update(ActivityContent(state: state, staleDate: nil)) }
             return
         }
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
