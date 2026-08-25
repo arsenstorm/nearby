@@ -8,9 +8,13 @@ struct RoomView: View {
         @Bindable var node = node
         let members = node.hosted?.members ?? node.joined?.members ?? []
 
-        VStack(spacing: 40) {
-            StatusDot(state: dotState, caption: caption, level: { node.inputLevel })
-                .padding(.top, 96)
+        VStack(spacing: 0) {
+            Spacer(minLength: 0)
+            StatusDot(state: dotState, level: { node.inputLevel })
+            Text(caption)
+                .font(.title3.weight(.semibold))
+                .padding(.top, 4)
+                .padding(.bottom, 36)
 
             if let pending = node.hosted?.pending, !pending.isEmpty {
                 card("Wants to join") {
@@ -31,24 +35,27 @@ struct RoomView: View {
                 }
             }
 
-            Spacer()
+            Spacer(minLength: 0)
+            Spacer(minLength: 0)
 
-            HStack(spacing: 12) {
+            HStack(spacing: 10) {
                 Button { node.muted.toggle() } label: {
                     Label(node.muted ? "Unmute" : "Mute", systemImage: node.muted ? "mic.slash.fill" : "mic.fill")
-                        .frame(maxWidth: .infinity).padding(.vertical, 8)
+                        .font(.headline).frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.glass)
                 Button(role: .destructive) { node.leaveOrClose() } label: {
                     Text(node.hosted != nil ? "Close room" : "Leave")
-                        .frame(maxWidth: .infinity).padding(.vertical, 8)
+                        .font(.headline).frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.glassProminent)
                 .tint(.red)
             }
+            .controlSize(.large)
+            .padding(.bottom, 8)
         }
-        .frame(maxWidth: 340)
-        .padding()
+        .frame(maxWidth: 320)
+        .padding(.horizontal, 24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.green.opacity(0.18).ignoresSafeArea())
         .toolbarTitleDisplayMode(.inline)
@@ -67,11 +74,13 @@ struct RoomView: View {
     }
 
     private func card<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(title).font(.headline)
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title).font(.footnote.weight(.medium)).foregroundStyle(.secondary)
             content()
         }
-        .padding()
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .padding(.bottom, 16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassEffect(in: .rect(cornerRadius: 24))
     }
