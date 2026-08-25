@@ -79,6 +79,7 @@ final class AudioEngine: @unchecked Sendable {
         try session.setPreferredSampleRate(Opus.sampleRate)
         try session.setPreferredIOBufferDuration(0.02)
         try session.setActive(true)
+        try? session.setPreferredInput(Self.preferredInput())
         installObservers()
 
         // Echo cancellation must be enabled before the tap is installed and the engine starts.
@@ -105,6 +106,32 @@ final class AudioEngine: @unchecked Sendable {
         engine.prepare()
         try engine.start()
         shared.withLock { $0.running = true }
+    }
+
+    // MARK: - Input selection
+
+    private static let preferredInputKey = "audio.preferredInputUID"
+
+    /// Inputs the session can use; requires the record category to be set, which start() does anyway.
+    static func availableInputs() -> [AVAudioSessionPortDescription] {
+        let session = AVAudioSession.sharedInstance()
+        try? session.setCategory(.playAndRecord, mode: .voiceChat,
+                                 options: [.allowBluetoothHFP, .allowBluetoothA2DP, .defaultToSpeaker])
+        return session.availableInputs ?? []
+    }
+
+    static var preferredInputUID: String? {
+        get { UserDefaults.standard.string(forKey: preferredInputKey) }
+        set {
+            UserDefaults.standard.set(newValue, forKey: preferredInputKey)
+            try? AVAudioSession.sharedInstance().setPreferredInput(preferredInput())
+        }
+    }
+
+    /// nil means the system default; a stored UID that is no longer available also falls back to it.
+    private static func preferredInput() -> AVAudioSessionPortDescription? {
+        guard let uid = preferredInputUID else { return nil }
+        return AVAudioSession.sharedInstance().availableInputs?.first { $0.uid == uid }
     }
 
     func stop() {

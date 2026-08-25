@@ -13,7 +13,7 @@ struct RootView: View {
                 }
             }
             .toolbar {
-                NavigationLink("Debug") { DebugView() }
+                NavigationLink { SettingsView() } label: { Image(systemName: "gearshape") }
             }
             .alert(
                 node.keyWarning.map { "\($0.hello.name) has a new key" } ?? "",
