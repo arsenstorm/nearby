@@ -59,7 +59,7 @@ Apple CryptoKit). Answer **Yes** to "uses encryption", then **Yes** to "only
 standard algorithms / exempt". Apple no longer requires an ERN for this, but a
 yearly self-classification report to BIS may be required — confirm on the
 Encryption page before submitting. Set `ITSAppUsesNonExemptEncryption` to
-`NO` in `Config/Info.plist` once confirmed so TestFlight stops asking.
+`NO` in `Config/Info.plist` (done) so TestFlight does not hold builds for compliance.
 
 ## Age rating
 

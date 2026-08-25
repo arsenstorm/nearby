@@ -18,22 +18,32 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Nearby uses Bluetooth to reach phones with no Wi-Fi.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_nearby._udp</string>
+	</array>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Nearby finds phones on the same network to talk to.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Nearby sends your voice to the people in your room.</string>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+		<string>bluetooth-central</string>
+		<string>bluetooth-peripheral</string>
+	</array>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
 	</array>
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>Nearby finds phones on the same network to talk to.</string>
-	<key>NSBonjourServices</key>
-	<array>
-		<string>_nearby._udp</string>
-	</array>
-	<key>NSMicrophoneUsageDescription</key>
-	<string>Nearby sends your voice to the people in your room.</string>
-	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>Nearby uses Bluetooth to reach phones with no Wi-Fi.</string>
 	<key>WiFiAwareServices</key>
 	<dict>
 		<key>_nearby._udp</key>
@@ -44,13 +54,5 @@
 			<dict/>
 		</dict>
 	</dict>
-	<key>NSSupportsLiveActivities</key>
-	<true/>
-	<key>UIBackgroundModes</key>
-	<array>
-		<string>audio</string>
-		<string>bluetooth-central</string>
-		<string>bluetooth-peripheral</string>
-	</array>
 </dict>
 </plist>
