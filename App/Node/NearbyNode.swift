@@ -156,6 +156,23 @@ final class NearbyNode {
         timers.append(every(2) { [self] in broadcastLinkState() })
     }
 
+    /// Listeners, browsers and connections do not survive the app being suspended; bring them back
+    /// from scratch so stale Bonjour state cannot leave us invisible.
+    func resumeFromBackground() {
+        guard started else { return }
+        let now = Date()
+        for (id, transport) in transports where transportStates[id]?.enabled == true {
+            for link in mesh.allLinks where link.transport == id { mesh.linkDown(link, now: now) }
+            transportStates[id]?.active = false
+            transportStates[id]?.linkCount = 0
+            Task { @MainActor [self] in
+                await transport.stop()
+                startTransport(id, transport)
+            }
+        }
+        rebuildPeerLinks()
+    }
+
     func setTransport(_ id: TransportID, enabled: Bool) {
         UserDefaults.standard.set(enabled, forKey: Self.enabledKey(id))
         transportStates[id]?.enabled = enabled
