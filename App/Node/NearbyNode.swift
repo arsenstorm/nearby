@@ -782,7 +782,10 @@ final class NearbyNode {
     private func stopCall() {
         outgoingVoice?.cancel()
         outgoingVoice = nil
-        audio?.stop()
+        // Engine teardown takes a noticeable moment; the UI must not wait for it.
+        if let audio {
+            Task.detached(priority: .userInitiated) { audio.stop() }
+        }
         audio = nil
         inCall = false
         voiceStats = [:]
