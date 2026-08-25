@@ -90,7 +90,7 @@ final class NearbyNode {
     private static let peerTimeout: TimeInterval = 5
     private static let roomTimeout: TimeInterval = 6
 
-    private let logger = Logger(subsystem: "com.shkrumelyak.nearby", category: "node")
+    private let logger = Logger(subsystem: "com.arsenstorm.nearby", category: "node")
     private let identity: Identity
     private var storedDisplayName: String
     private var peerStore: PeerStore

@@ -4,9 +4,9 @@ import Security
 import os
 
 enum IdentityStore {
-    private static let service = "com.shkrumelyak.nearby.identity"
+    private static let service = "com.arsenstorm.nearby.identity"
     private static let account = "seed"
-    private static let logger = Logger(subsystem: "com.shkrumelyak.nearby", category: "identity")
+    private static let logger = Logger(subsystem: "com.arsenstorm.nearby", category: "identity")
 
     /// Loads the 32-byte seed from the Keychain or creates and stores a new one.
     static func loadOrCreate() -> Identity {

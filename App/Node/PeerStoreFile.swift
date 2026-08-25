@@ -3,7 +3,7 @@ import NearbyCore
 import os
 
 enum PeerStoreFile {
-    private static let logger = Logger(subsystem: "com.shkrumelyak.nearby", category: "peers")
+    private static let logger = Logger(subsystem: "com.arsenstorm.nearby", category: "peers")
 
     private static var url: URL? {
         guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first

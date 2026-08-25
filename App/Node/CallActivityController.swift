@@ -7,7 +7,7 @@ import os
 @MainActor
 final class CallActivityController {
     private let node: NearbyNode
-    private let logger = Logger(subsystem: "com.shkrumelyak.nearby", category: "activity")
+    private let logger = Logger(subsystem: "com.arsenstorm.nearby", category: "activity")
     private var activity: Activity<CallActivityAttributes>?
     private var lastState: CallActivityAttributes.ContentState?
     private var callStartedAt: Date?
