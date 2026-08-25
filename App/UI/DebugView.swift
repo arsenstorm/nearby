@@ -5,6 +5,7 @@ struct DebugView: View {
     @Environment(NearbyNode.self) private var node
 
     var body: some View {
+        @Bindable var node = node
         Form {
             Section("Transports") {
                 ForEach(TransportID.allCases, id: \.self) { id in
@@ -31,13 +32,46 @@ struct DebugView: View {
                     VStack(alignment: .leading) {
                         Text(peer.name)
                         Text(peer.id.description).monospaced()
-                        Text(peer.lastSeen, style: .relative)
-                        ForEach(peer.links, id: \.self) { link in
-                            Text(link.description)
+                        if let path = node.pathInfo[peer.id] {
+                            Text(pathLine(path))
                         }
+                        ForEach(peer.links, id: \.self) { link in
+                            Text(link.description).monospaced()
+                        }
+                        Text(peer.lastSeen, style: .relative)
                     }
                     .font(.footnote)
                 }
+            }
+
+            Section("Tuning") {
+                Stepper(
+                    "Jitter depth: \(node.jitterTargetDepth) frames (\(node.jitterTargetDepth * 20) ms)",
+                    value: $node.jitterTargetDepth,
+                    in: 1...25
+                )
+                VStack(alignment: .leading) {
+                    Text("Multipath when loss > \(Int(node.multipathLossThreshold * 100))%")
+                    Slider(value: $node.multipathLossThreshold, in: 0...0.5, step: 0.01)
+                }
+            }
+
+            Section("Latency") {
+                Text("Mouth to ear (estimate): \(Int(mouthToEarMs)) ms")
+                Text("I/O \(Int(node.ioLatencyMs)) ms")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                Text("Voice \(node.inCall ? "on" : "off")")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Packets") {
+                LabeledContent("sent", value: "\(node.packetCounters.sent)")
+                LabeledContent("received", value: "\(node.packetCounters.received)")
+                LabeledContent("relayed", value: "\(node.packetCounters.relayed)")
+                LabeledContent("dropped (dedup)", value: "\(node.packetCounters.droppedDedup)")
+                LabeledContent("dropped (TTL)", value: "\(node.packetCounters.droppedTTL)")
             }
 
             Section("Node") {
@@ -46,6 +80,16 @@ struct DebugView: View {
             }
         }
         .navigationTitle("Debug")
+    }
+
+    private var mouthToEarMs: Double {
+        let path = node.voiceStats.keys.compactMap { node.pathInfo[$0]?.costMs }.min() ?? 0
+        return path + Double(node.jitterTargetDepth * 20) + 20 + node.ioLatencyMs
+    }
+
+    private func pathLine(_ path: PathInfo) -> String {
+        let via = path.nextLink?.transport.rawValue ?? "—"
+        return "\(path.hops) hop(s) via \(via) · \(Int(path.latencyMs)) ms · loss \(Int(path.lossFraction * 100))% · jitter \(Int(path.jitterMs)) ms"
     }
 
     private func detail(_ state: TransportState?) -> String {
