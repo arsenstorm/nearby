@@ -560,6 +560,9 @@ final class NearbyNode {
                 jitterMs: metrics?.jitterMs ?? 0
             )
         }
+        for (id, path) in info where path.hops != pathInfo[id]?.hops || path.nextLink != pathInfo[id]?.nextLink {
+            logger.notice("path to \(id.description, privacy: .public): \(path.hops) hops via \(path.nextLink?.description ?? "-", privacy: .public) cost \(Int(path.costMs)) ms")
+        }
         pathInfo = info
     }
 
