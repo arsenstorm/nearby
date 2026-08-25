@@ -25,20 +25,17 @@ struct RoomListView: View {
             }
             .padding(.top, 4)
 
-            HStack(spacing: 10) {
-                Button { node.hostRoom(name: roomName) } label: {
-                    Text("Start a room").font(.headline).frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.glassProminent)
-                .disabled(roomName.trimmingCharacters(in: .whitespaces).isEmpty)
-                Button { showRoomSettings = true } label: {
-                    Image(systemName: "slider.horizontal.3").font(.headline)
-                }
-                .buttonStyle(.glass)
-                .accessibilityLabel("Room settings")
+            Button { node.hostRoom(name: roomName) } label: {
+                Text("Start a room").font(.headline).frame(maxWidth: .infinity)
             }
+            .buttonStyle(.glassProminent)
             .controlSize(.large)
+            .disabled(roomName.trimmingCharacters(in: .whitespaces).isEmpty)
             .padding(.top, 36)
+
+            Button("Room settings") { showRoomSettings = true }
+                .font(.subheadline)
+                .padding(.top, 12)
 
             nearbyRooms
                 .padding(.top, 28)
