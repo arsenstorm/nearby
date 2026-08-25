@@ -23,6 +23,7 @@ struct DebugView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+                NavigationLink("Wi-Fi Aware pairing") { WiFiAwarePairingView() }
             }
 
             Section("Peers") {

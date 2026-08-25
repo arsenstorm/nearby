@@ -95,9 +95,11 @@ final class NearbyNode {
         self.transports = [
             .lan: DatagramTransport(id: .lan, peerToPeer: false, serviceName: serviceName),
             .p2pWiFi: DatagramTransport(id: .p2pWiFi, peerToPeer: true, serviceName: serviceName),
+            .ble: BLETransport(serviceName: serviceName),
+            .wifiAware: WiFiAwareTransport(serviceName: serviceName),
         ]
         for id in TransportID.allCases {
-            let supported = transports[id] != nil
+            let supported = transports[id]?.isSupported ?? false
             transportStates[id] = TransportState(
                 supported: supported,
                 enabled: supported && Self.enabledSetting(id),
@@ -349,10 +351,10 @@ final class NearbyNode {
                 roomKey: accept.roomKey
             )
             joinState = .idle
-
-        case .joinReject(let roomID, let reason):
             syncRoomKey()
             startCall()
+
+        case .joinReject(let roomID, let reason):
             guard joinState == .requested(roomID) else { return }
             joinState = .rejected(reason)
 
@@ -361,19 +363,19 @@ final class NearbyNode {
             room.members = members
             room.roomKey = roomKey
             joined = room
-
-        case .leave(let roomID):
             syncRoomKey()
             syncStreams()
+
+        case .leave(let roomID):
             if let room = joined, room.host == source, room.id == roomID {
                 joined = nil
+                stopCall()
             } else if var room = hosted, room.id == roomID, let update = room.remove(source) {
                 hosted = room
-                stopCall()
-                for member in room.members where member.id != nodeID {
-                    sendControl(update, to: member.id)
                 syncRoomKey()
                 syncStreams()
+                for member in room.members where member.id != nodeID {
+                    sendControl(update, to: member.id)
                 }
             }
         }
@@ -425,13 +427,13 @@ final class NearbyNode {
         let now = Date()
         peers.removeAll { now.timeIntervalSince($0.lastSeen) > Self.peerTimeout }
         refreshRooms(now: now)
-    }
-
         guard inCall, let audio else { return }
         voiceStats = Dictionary(
             uniqueKeysWithValues: streamPeers.compactMap { id in audio.stats(for: id).map { (id, $0) } }
         )
         ioLatencyMs = audio.ioLatencyMs
+    }
+
     func trustKeyChange() {
         guard let warning = keyWarning else { return }
         if let record = try? peerStore.trust(warning.hello, now: Date()) {
@@ -467,19 +469,19 @@ final class NearbyNode {
             host: Member(id: nodeID, name: displayName)
         )
         joined = nil
-    }
-
         syncRoomKey()
         startCall()
+    }
+
     func closeRoom() {
         guard let hosted else { return }
         for member in hosted.members where member.id != nodeID {
             sendControl(.leave(roomID: hosted.id), to: member.id)
         }
         self.hosted = nil
+        stopCall()
     }
 
-        stopCall()
     func requestJoin(_ room: RoomAnnounce) {
         sendControl(
             .joinRequest(JoinRequest(roomID: room.roomID, name: displayName, codeProof: nil)),
@@ -491,10 +493,10 @@ final class NearbyNode {
     func accept(_ id: NodeID) {
         guard var room = hosted, let accept = room.accept(id) else { return }
         hosted = room
-        sendControl(.joinAccept(accept), to: id)
-        for member in room.members where member.id != nodeID && member.id != id {
         syncRoomKey()
         syncStreams()
+        sendControl(.joinAccept(accept), to: id)
+        for member in room.members where member.id != nodeID && member.id != id {
             sendControl(
                 .memberList(roomID: room.id, members: room.members, roomKey: room.roomKey),
                 to: member.id
@@ -512,8 +514,6 @@ final class NearbyNode {
         if let joined { sendControl(.leave(roomID: joined.id), to: joined.host) }
         joined = nil
         joinState = .idle
-    }
-}
         stopCall()
     }
 
@@ -584,3 +584,5 @@ final class NearbyNode {
         // Silent drop covers the rotation window where the sender still holds the previous room key.
         guard let frame = try? roomKey.open(packet.payload, header: header) else { return }
         audio?.push(header.source, sequence: header.sequence, frame: frame)
+    }
+}
