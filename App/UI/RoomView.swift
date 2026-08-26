@@ -28,8 +28,7 @@ struct RoomView: View {
                         VStack(alignment: .leading, spacing: 0) {
                             ForEach(members, id: \.id) { member in
                                 HStack(spacing: 10) {
-                                    let quality = member.id == node.nodeID ? 1
-                                        : node.peers.contains { $0.id == member.id } ? linkQuality(node.pathInfo[member.id]) : 0
+                                    let quality = self.quality(of: member)
                                     Text(member.id == node.nodeID ? "You" : member.name)
                                         .lineLimit(1)
                                         .layoutPriority(1)
@@ -70,7 +69,6 @@ struct RoomView: View {
         }
     }
 
-    /// Standard call controls: mute and hang up.
     private var bottomBar: some View {
         HStack(spacing: 24) {
             Button { node.muted.toggle() } label: {
@@ -99,9 +97,12 @@ struct RoomView: View {
         .animation(.easeInOut(duration: 0.2), value: node.muted)
     }
 
-    /// 0 unreachable; otherwise 1 minus penalties for extra hops, loss and latency.
-    private func linkQuality(_ path: PathInfo?) -> Double {
-        guard let path else { return 0 }
+    /// 1 for yourself, 0 unreachable; otherwise 1 minus penalties for extra hops, loss and latency.
+    private func quality(of member: Member) -> Double {
+        guard member.id != node.nodeID else { return 1 }
+        guard node.peers.contains(where: { $0.id == member.id }),
+              let path = node.pathInfo[member.id]
+        else { return 0 }
         var q = 1.0
         q -= Double(max(path.hops - 1, 0)) * 0.25
         q -= min(path.lossFraction * 3, 0.5)
