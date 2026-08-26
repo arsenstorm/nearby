@@ -15,6 +15,31 @@ final class AudioEngine: @unchecked Sendable {
             self.jitter = jitter
             self.decoder = decoder
         }
+
+        func mix(into out: UnsafeMutablePointer<Float>, count: Int) {
+            var written = 0
+            while written < count {
+                if readIndex >= pcm.count { refill() }
+                let take = min(count - written, pcm.count - readIndex)
+                for i in 0..<take { out[written + i] += pcm[readIndex + i] }
+                written += take
+                readIndex += take
+            }
+        }
+
+        /// Refills `pcm` from the jitter buffer, or with silence when nothing decodes.
+        private func refill() {
+            var decoded = false
+            if case .frame(let data) = jitter.pop(), !data.isEmpty {
+                decoded = (try? pcm.withUnsafeMutableBufferPointer {
+                    try decoder.decode(data, into: $0)
+                }) != nil
+            }
+            if !decoded {
+                for i in 0..<pcm.count { pcm[i] = 0 }
+            }
+            readIndex = 0
+        }
     }
 
     private struct Shared {
@@ -246,28 +271,9 @@ final class AudioEngine: @unchecked Sendable {
         out.update(repeating: 0, count: count)
 
         // ponytail: the render thread takes an unfair lock; acceptable for a handful of peers.
+        // Swap to per-stream lock-free rings if rooms grow beyond that.
         shared.withLock { state in
-            for stream in state.streams.values {
-                var written = 0
-                while written < count {
-                    if stream.readIndex >= stream.pcm.count {
-                        var decoded = false
-                        if case .frame(let data) = stream.jitter.pop(), !data.isEmpty {
-                            decoded = (try? stream.pcm.withUnsafeMutableBufferPointer {
-                                try stream.decoder.decode(data, into: $0)
-                            }) != nil
-                        }
-                        if !decoded {
-                            for i in 0..<stream.pcm.count { stream.pcm[i] = 0 }
-                        }
-                        stream.readIndex = 0
-                    }
-                    let take = min(count - written, stream.pcm.count - stream.readIndex)
-                    for i in 0..<take { out[written + i] += stream.pcm[stream.readIndex + i] }
-                    written += take
-                    stream.readIndex += take
-                }
-            }
+            for stream in state.streams.values { stream.mix(into: out, count: count) }
         }
 
         for i in 0..<count { out[i] = min(max(out[i], -1), 1) }
