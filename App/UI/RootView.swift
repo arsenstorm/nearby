@@ -101,16 +101,7 @@ struct RootView: View {
     private var roomName: String { node.hosted?.name ?? node.joined?.name ?? "the room" }
 
     private var title: String {
-        if inRoom {
-            if node.disconnected { return "Connection lost" }
-            if node.muted { return "You're muted" }
-            guard node.inCall else { return "Setting up audio…" }
-            switch others.count {
-            case 0: return "Waiting for people"
-            case 1: return "Talking with \(others[0].name)"
-            default: return "Talking with \(others.count) people"
-            }
-        }
+        if inRoom { return node.callTitle }
         return node.peers.isEmpty ? "Looking for people nearby" : "\(node.peers.count) \(node.peers.count == 1 ? "person" : "people") nearby"
     }
 

@@ -54,30 +54,14 @@ final class CallActivityController {
 
     private func sync() {
         guard node.inCall else {
-            callStartedAt = nil
-            lastState = nil
-            guard let activity else { return }
-            self.activity = nil
-            Task { await activity.end(nil, dismissalPolicy: .immediate) }
+            endActivity()
             return
         }
         let startedAt = callStartedAt ?? Date()
         callStartedAt = startedAt
-        let members = node.hosted?.members ?? node.joined?.members ?? []
-        let others = members.filter { $0.id != node.nodeID }
-        let title: String
-        if node.disconnected { title = "Connection lost" }
-        else if node.muted { title = "You're muted" }
-        else {
-            switch others.count {
-            case 0: title = "Waiting for people"
-            case 1: title = "Talking with \(others[0].name)"
-            default: title = "Talking with \(others.count) people"
-            }
-        }
         let state = CallActivityAttributes.ContentState(
-            title: title,
-            subtitle: "\(members.count) in the room ·",
+            title: node.callTitle,
+            subtitle: "\(node.currentMembers.count) in the room ·",
             muted: node.muted,
             disconnected: node.disconnected,
             startedAt: startedAt
@@ -99,6 +83,14 @@ final class CallActivityController {
         } catch {
             logger.error("live activity request failed: \(error.localizedDescription, privacy: .public)")
         }
+    }
+
+    private func endActivity() {
+        callStartedAt = nil
+        lastState = nil
+        guard let activity else { return }
+        self.activity = nil
+        Task { await activity.end(nil, dismissalPolicy: .immediate) }
     }
 }
 
