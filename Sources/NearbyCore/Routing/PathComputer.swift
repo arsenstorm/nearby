@@ -57,20 +57,39 @@ public enum PathComputer {
 
         var alternates: [NodeID: NodeID] = [:]
         for (destination, route) in routes {
-            var bestNeighbor: NodeID?
-            var bestCost = Double.infinity
-            for (neighbor, edgeCost) in sourceEdges where neighbor != route.nextHop {
-                guard let rest = distFromNeighbor[neighbor]?[destination], rest.isFinite else { continue }
-                let candidate = edgeCost + rest
-                if candidate < bestCost || (candidate == bestCost && (bestNeighbor == nil || neighbor < bestNeighbor!)) {
-                    bestCost = candidate
-                    bestNeighbor = neighbor
-                }
-            }
-            if let bestNeighbor { alternates[destination] = bestNeighbor }
+            let alternate = bestAlternate(
+                to: destination, avoiding: route.nextHop,
+                sourceEdges: sourceEdges, distFromNeighbor: distFromNeighbor
+            )
+            if let alternate { alternates[destination] = alternate }
         }
 
         return RoutingTable(routes: routes, alternates: alternates)
+    }
+
+    /// Deterministic ordering: smaller cost wins, node ID breaks ties, and any candidate beats none.
+    private static func betterCandidate(_ node: NodeID, cost: Double, than best: NodeID?, bestCost: Double) -> Bool {
+        guard let best else { return true }
+        if cost != bestCost { return cost < bestCost }
+        return node < best
+    }
+
+    /// The cheapest way to `destination` through a neighbor other than the primary next hop.
+    private static func bestAlternate(
+        to destination: NodeID, avoiding primaryHop: NodeID,
+        sourceEdges: [NodeID: Double], distFromNeighbor: [NodeID: [NodeID: Double]]
+    ) -> NodeID? {
+        var best: NodeID?
+        var bestCost = Double.infinity
+        for (neighbor, edgeCost) in sourceEdges where neighbor != primaryHop {
+            guard let rest = distFromNeighbor[neighbor]?[destination], rest.isFinite else { continue }
+            let candidate = edgeCost + rest
+            if betterCandidate(neighbor, cost: candidate, than: best, bestCost: bestCost) {
+                bestCost = candidate
+                best = neighbor
+            }
+        }
+        return best
     }
 
     /// Walks the shortest-path tree back from `destination` to the node adjacent to `source`.
@@ -94,7 +113,7 @@ public enum PathComputer {
             var currentDist = Double.infinity
             for node in nodes where !visited.contains(node) {
                 guard let d = dist[node], d.isFinite else { continue }
-                if current == nil || d < currentDist || (d == currentDist && node < current!) {
+                if betterCandidate(node, cost: d, than: current, bestCost: currentDist) {
                     current = node
                     currentDist = d
                 }
