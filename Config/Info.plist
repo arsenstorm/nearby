@@ -18,6 +18,15 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.arsenstorm.nearby.card</string>
+			<key>CFBundleURLSchemes</key>
+			<array><string>nearby</string></array>
+		</dict>
+	</array>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>NSBluetoothAlwaysUsageDescription</key>
@@ -26,6 +35,8 @@
 	<array>
 		<string>_nearby._udp</string>
 	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>Nearby scans a friend's card to add them.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Nearby finds phones on the same network to talk to.</string>
 	<key>NSMicrophoneUsageDescription</key>

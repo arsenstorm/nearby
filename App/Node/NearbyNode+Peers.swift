@@ -92,6 +92,19 @@ extension NearbyNode {
         ioLatencyMs = audio.ioLatencyMs
     }
 
+    /// A card scanned or opened from a link. Returns false when the card is our own.
+    /// Not added to `peers`: that list is live sightings, and `prune()` drops anything older
+    /// than `peerTimeout` within a second. The store remembers it and the internet transport dials it.
+    @discardableResult
+    func addPeer(_ card: PeerCard) -> Bool {
+        // Scanning someone you blocked is not consent; unblocking is a separate, deliberate action.
+        guard card.nodeID != nodeID, !blocked.contains(card.nodeID) else { return false }
+        _ = peerStore.add(card, now: Date())
+        PeerStoreFile.save(peerStore)
+        syncInternetPeers()
+        return true
+    }
+
     func syncInternetPeers() {
         (transports[.internet] as? InternetTransport)?.setPeers(Set(peerStore.records.keys).subtracting(blocked))
     }
@@ -110,6 +123,17 @@ extension NearbyNode {
     func unblock(_ id: NodeID) {
         blocked.remove(id)
         BlockListFile.save(blocked)
+        syncInternetPeers()
+    }
+
+    /// Drops a stale or unwanted identity. Unlike block, the peer comes back with its next Hello or card.
+    func forgetPeer(_ id: NodeID) {
+        peerStore.remove(id)
+        PeerStoreFile.save(peerStore)
+        peers.removeAll { $0.id == id }
+        sessions[id] = nil
+        let now = Date()
+        for link in mesh.links(to: id) { mesh.linkDown(link, now: now) }
         syncInternetPeers()
     }
 

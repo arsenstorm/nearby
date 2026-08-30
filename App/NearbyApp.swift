@@ -1,3 +1,4 @@
+import NearbyCore
 import SwiftUI
 
 @main
@@ -17,6 +18,9 @@ struct NearbyApp: App {
                     let controller = CallActivityController(node: node)
                     activity = controller
                     controller.start()
+                }
+                .onOpenURL { url in
+                    if let card = PeerCard(url: url) { node.addPeer(card) }
                 }
                 .onChange(of: scenePhase) { _, phase in
                     // Coming back passes through .inactive, so remember the background visit.
