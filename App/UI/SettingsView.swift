@@ -31,6 +31,12 @@ struct SettingsView: View {
                 TextField("Name", text: $node.displayName)
             }
 
+            Section {
+                Toggle("Noise reduction", isOn: $node.noiseReduction)
+            } footer: {
+                Text("Drops keyboard clicks, taps and other short noises.")
+            }
+
             Section("Friends") {
                 NavigationLink("Friends") { FriendsView() }
                 NavigationLink("Your card") { PeerCardView() }
