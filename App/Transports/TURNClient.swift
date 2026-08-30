@@ -15,8 +15,8 @@ enum TURNError: Error {
     case badAllocation
 }
 
-/// A TURN client (RFC 8656) riding the transport's own UDP socket, so the relay sees the same mapping the
-/// peer punches. Every method runs on the transport queue.
+/// A TURN client (RFC 8656) on a UDP socket of its own, bound for the life of the allocation.
+/// Every method runs on the transport queue.
 final class TURNClient: @unchecked Sendable {
     var onRelayed: ((_ relayed: (host: String, port: UInt16)) -> Void)?
     var onData: ((_ payload: Data, _ peerHost: String, _ peerPort: UInt16) -> Void)?
@@ -42,8 +42,13 @@ final class TURNClient: @unchecked Sendable {
     private static let permissionInterval: TimeInterval = 240
     private static let maxAttempts = 7
 
-    private let credentials: TURNCredentials
-    private let sendDatagram: (Data, String, UInt16) -> Void
+    let credentials: TURNCredentials
+    /// The address the relay hands out for this allocation; nil until it does.
+    private(set) var relayedAddress: (host: String, port: UInt16)?
+
+    /// Each allocation needs a 5-tuple of its own: RFC 8656 §6.2 answers a second Allocate on one
+    /// already in use with 437, so a renewed allocation cannot share the transport's socket.
+    private let socket: UDPSocket
     private let queue: DispatchQueue
     private let logger = Logger(subsystem: "com.arsenstorm.nearby", category: "turn")
 
@@ -57,10 +62,11 @@ final class TURNClient: @unchecked Sendable {
     private var nextChannel: UInt16 = 0x4000
     private var closed = false
 
-    init(credentials: TURNCredentials, send: @escaping (Data, String, UInt16) -> Void, queue: DispatchQueue) {
+    init(credentials: TURNCredentials, queue: DispatchQueue) throws {
         self.credentials = credentials
-        self.sendDatagram = send
         self.queue = queue
+        socket = try UDPSocket(port: .random(in: 20000...60000), queue: queue)
+        socket.onReceive = { [weak self] data, host, port in self?.handle(data, from: host, port: port) }
     }
 
     // MARK: - Allocation
@@ -80,6 +86,7 @@ final class TURNClient: @unchecked Sendable {
               let relayed = STUNMessage.xorAddress(value, transactionID: response.transactionID)
         else { return fail(TURNError.badAllocation) }
         logger.notice("relay \(relayed.host, privacy: .public):\(relayed.port)")
+        relayedAddress = relayed
         scheduleRefresh()
         onRelayed?(relayed)
     }
@@ -108,6 +115,7 @@ final class TURNClient: @unchecked Sendable {
         pending.removeAll()
         permitted.removeAll()
         channels.removeAll()
+        socket.shutdown()
     }
 
     // MARK: - Peers
@@ -237,23 +245,20 @@ final class TURNClient: @unchecked Sendable {
     }
 
     private func transmit(_ data: Data) {
-        sendDatagram(data, serverAddress, credentials.server.port)
+        socket.send(data, to: serverAddress, port: credentials.server.port)
     }
 
     // MARK: - Inbound
 
-    /// True when the datagram came from the relay server and was consumed here.
-    func handle(_ datagram: Data, from host: String, port: UInt16) -> Bool {
-        guard host == serverAddress, port == credentials.server.port else { return false }
+    /// Nothing but the relay server has this socket's address, so anything else is junk.
+    private func handle(_ datagram: Data, from host: String, port: UInt16) {
+        guard host == serverAddress, port == credentials.server.port else { return }
         if let framed = ChannelData.decode(datagram) {
-            if let channel = channels.values.first(where: { $0.number == framed.channel }) {
-                onData?(framed.payload, channel.host, channel.port)
-            }
-            return true
+            guard let channel = channels.values.first(where: { $0.number == framed.channel }) else { return }
+            return onData?(framed.payload, channel.host, channel.port) ?? ()
         }
-        guard let message = STUNMessage(decoding: datagram) else { return false }
+        guard let message = STUNMessage(decoding: datagram) else { return }
         if message.cls == .indication { deliver(message) } else { complete(message) }
-        return true
     }
 
     private func deliver(_ indication: STUNMessage) {
