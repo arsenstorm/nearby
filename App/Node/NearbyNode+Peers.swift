@@ -90,11 +90,16 @@ extension NearbyNode {
         ioLatencyMs = audio.ioLatencyMs
     }
 
+    func syncInternetPeers() {
+        (transports[.internet] as? InternetTransport)?.setPeers(Set(peerStore.records.keys))
+    }
+
     func trustKeyChange() {
         guard let warning = keyWarning else { return }
         if (try? peerStore.trust(warning.hello, now: Date())) != nil {
             makeSession(for: warning.hello)
             PeerStoreFile.save(peerStore)
+            syncInternetPeers()
         }
         keyWarning = nil
     }
