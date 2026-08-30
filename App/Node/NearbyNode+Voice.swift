@@ -43,6 +43,7 @@ extension NearbyNode {
         guard let audio else { return }
         audio.jitterTargetDepth = jitterTargetDepth
         audio.internetJitterTargetDepth = internetJitterTargetDepth
+        audio.noiseReduction = noiseReduction
         do {
             try audio.start()
         } catch {

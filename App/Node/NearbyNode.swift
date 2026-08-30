@@ -49,6 +49,12 @@ final class NearbyNode {
     var internetJitterTargetDepth: Int = 3 {
         didSet { audio?.internetJitterTargetDepth = internetJitterTargetDepth }
     }
+    var noiseReduction: Bool = AudioEngine.storedNoiseReduction {
+        didSet {
+            UserDefaults.standard.set(noiseReduction, forKey: AudioEngine.noiseReductionKey)
+            audio?.noiseReduction = noiseReduction
+        }
+    }
 
     private static let displayNameKey = "displayName"
     static let peerTimeout: TimeInterval = 5
