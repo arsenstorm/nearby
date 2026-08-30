@@ -4,6 +4,7 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync, sign as edSign, createHash } from "node:crypto";
 import { spawn } from "node:child_process";
+import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import { makeChain } from "./chain.mjs";
 
@@ -37,12 +38,59 @@ function signChallenge(privateKey, nonceHex, room) {
   return edSign(null, data, privateKey);
 }
 
+// ---- fake TURN key-server ----
+// Stands in for Cloudflare's Realtime TURN API (see src/turn.ts) so the test never calls the
+// real thing. `failNext` flips case h's single 500 without disturbing every other request.
+
+const turnServer = { requests: 0, failNext: false };
+
+function startTurnServer() {
+  return new Promise((resolve) => {
+    const server = createServer((req, res) => {
+      if (req.method !== "POST" || req.url !== "/turn/keys/test-key/credentials/generate-ice-servers") {
+        res.writeHead(404).end();
+        return;
+      }
+      let body = "";
+      req.on("data", (d) => (body += d));
+      req.on("end", () => {
+        turnServer.requests++;
+        if (turnServer.failNext) {
+          turnServer.failNext = false;
+          res.writeHead(500).end();
+          return;
+        }
+        assert.equal(req.headers.authorization, "Bearer test-token");
+        assert.equal(body, JSON.stringify({ ttl: 600 }));
+        res.writeHead(200, { "Content-Type": "application/json" }).end(
+          JSON.stringify({
+            // Cloudflare's documented shape: a STUN entry, then the TURN entry carrying credentials.
+            iceServers: [
+              { urls: ["stun:stun.cloudflare.com:3478"] },
+              {
+                urls: ["turn:turn.cloudflare.com:3478?transport=udp", "turn:turn.cloudflare.com:3478?transport=tcp"],
+                username: "u1",
+                credential: "c1",
+              },
+            ],
+          }),
+        );
+      });
+    });
+    server.listen(0, "127.0.0.1", () => resolve(server));
+  });
+}
+
 // ---- wrangler dev lifecycle ----
 
 let proc;
+let turnServerHandle;
 process.on("exit", () => {
   try {
     proc?.kill();
+  } catch {}
+  try {
+    turnServerHandle?.close();
   } catch {}
 });
 
@@ -138,7 +186,15 @@ async function main() {
   // below verifies in the Worker. That var is never set in production (see wrangler.jsonc).
   const chain = makeChain();
   const testRoot = chain.rootDer.toString("base64");
-  const args = ["wrangler", "dev", "--port", String(PORT), "--local", "--var", `APPLE_TEST_ROOT:${testRoot}`];
+  turnServerHandle = await startTurnServer();
+  const turnBase = `http://127.0.0.1:${turnServerHandle.address().port}`;
+  const args = [
+    "wrangler", "dev", "--port", String(PORT), "--local",
+    "--var", `APPLE_TEST_ROOT:${testRoot}`,
+    "--var", `TURN_KEY_ID:test-key`,
+    "--var", `TURN_API_TOKEN:test-token`,
+    "--var", `TURN_API_BASE:${turnBase}`,
+  ];
   proc = spawn("npx", args, {
     cwd: WEB_DIR,
     stdio: ["ignore", "pipe", "pipe"],
@@ -222,8 +278,15 @@ async function main() {
   wsA = await connect(A, idA, idB, roomAB);
   {
     const jws = chain.jws({ bundleId: BUNDLE_ID, receiptType: "Sandbox" });
+    const before = turnServer.requests;
     wsA.send(JSON.stringify({ t: "relay", entitlement: jws }));
-    assert.deepEqual(JSON.parse(await nextMessage(wsA)), { t: "relay", ok: true, entitlement: "beta" });
+    assert.deepEqual(JSON.parse(await nextMessage(wsA)), {
+      t: "relay",
+      ok: true,
+      entitlement: "beta",
+      turn: { host: "turn.cloudflare.com", port: 3478, username: "u1", credential: "c1", ttl: 600 },
+    });
+    assert.equal(turnServer.requests, before + 1);
     wsA.send(JSON.stringify({ t: "relay", entitlement: "garbage" }));
     assert.deepEqual(JSON.parse(await nextMessage(wsA)), { t: "relay", ok: false, reason: "not entitled" });
     // Whatever B sees next must be this frame, so neither relay frame reached it.
@@ -232,6 +295,15 @@ async function main() {
     assert.equal(await nextMessage(wsB), after);
   }
   console.log("g. relay answered locally, not forwarded: pass");
+
+  // h. TURN key-server failure doesn't crash the room; the caller sees ok:false instead.
+  {
+    turnServer.failNext = true;
+    const jws = chain.jws({ bundleId: BUNDLE_ID, receiptType: "Sandbox" });
+    wsA.send(JSON.stringify({ t: "relay", entitlement: jws }));
+    assert.deepEqual(JSON.parse(await nextMessage(wsA)), { t: "relay", ok: false, reason: "relay unavailable" });
+  }
+  console.log("h. TURN mint failure replies ok:false: pass");
 
   console.log("all cases passed");
 }
