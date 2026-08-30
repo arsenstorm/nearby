@@ -60,11 +60,12 @@ enum RelayEntitlement: Equatable, Sendable {
         }
 
         private func store(_ proof: Proof) {
-            var saved: [String: Any] = ["jws": proof.jws as Any]
+            var saved: [String: Any] = [:]
+            if let jws = proof.jws { saved["jws"] = jws }
             switch proof.state {
             case .subscriber(let expires):
                 saved["kind"] = "subscriber"
-                saved["expires"] = expires as Any
+                if let expires { saved["expires"] = expires }
             case .beta: saved["kind"] = "beta"
             case .freeDirectOnly: saved["kind"] = "free"
             }
