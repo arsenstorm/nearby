@@ -250,7 +250,8 @@ final class InternetTransport: Transport, @unchecked Sendable {
 
     private func relayReady(_ peer: NodeID, relayed: (host: String, port: UInt16), candidates: [Candidate]) {
         // The relay drops anything from an address it has no permission for (RFC 8656 §9).
-        for host in Set(candidates.map(\.host)) { relays[peer]?.permit(host: host) }
+        // The relay can only reach the peer's public addresses, and Cloudflare refuses private ones outright.
+        for host in Set(candidates.map(\.host)) where Self.isPublic(host) { relays[peer]?.permit(host: host) }
         if let task = rooms[peer] {
             let relay = Candidate(kind: .relay, host: relayed.host, port: relayed.port)
             finishOffer(task, peer: peer, candidates: (mine[peer] ?? []) + [relay])
@@ -263,6 +264,17 @@ final class InternetTransport: Transport, @unchecked Sendable {
     }
 
     private func relayed(_ link: LinkID) -> Bool { link.endpoint.hasPrefix("relay:") }
+
+    private static func isPublic(_ host: String) -> Bool {
+        if host.contains(":") { return !(host.hasPrefix("fe80") || host.hasPrefix("fd") || host.hasPrefix("fc") || host == "::1") }
+        let parts = host.split(separator: ".").compactMap { UInt8($0) }
+        guard parts.count == 4 else { return false }
+        let (a, b) = (parts[0], parts[1])
+        // RFC 1918, CGNAT 100.64/10, link-local, loopback and the 464XLAT prefix are all unreachable from a relay.
+        if a == 10 || a == 127 || (a == 169 && b == 254) || (a == 192 && b == 168) || (a == 192 && b == 0) { return false }
+        if (a == 172 && (16...31).contains(b)) || (a == 100 && (64...127).contains(b)) { return false }
+        return true
+    }
 
     private func sendRaw(_ data: Data, host: String, port: UInt16, relay: NodeID?) {
         guard let relay, let client = relays[relay] else { return socket?.send(data, to: host, port: port) ?? () }

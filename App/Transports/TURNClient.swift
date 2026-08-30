@@ -213,6 +213,10 @@ final class TURNClient: @unchecked Sendable {
         let error = message.attribute(STUNAttribute.errorCode).flatMap(STUNMessage.errorCode) ?? (code: 0, reason: "")
         // 401 hands out the realm and nonce to sign with; 438 replaces a stale one (RFC 8489 §9.2.5).
         guard error.code == 401 || error.code == 438, !state.retried, adoptCredentials(message) else {
+            // A refused permission or channel loses one peer path; only the allocation itself is fatal.
+            guard state.method == .allocate || state.method == .refresh else {
+                return logger.error("turn \(String(describing: state.method), privacy: .public) refused: \(error.code) \(error.reason, privacy: .public)")
+            }
             return fail(TURNError.rejected(code: error.code, reason: error.reason))
         }
         request(state.method, signed: true, retried: true, build: state.build, onSuccess: state.onSuccess)
