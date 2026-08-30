@@ -75,6 +75,8 @@ final class InternetTransport: Transport, @unchecked Sendable {
         var lastHeard: Date
         /// The allocation this link's datagrams ride; nil when the path is direct.
         var relay: TURNClient?
+        /// True on either end of a relayed path: ours, or one the peer allocated and we send straight into.
+        let relayed: Bool
     }
 
     init(identity: Identity, rendezvous: URL = URL(string: "wss://nearby.arsenstorm.com/pair/")!,
@@ -190,7 +192,7 @@ final class InternetTransport: Transport, @unchecked Sendable {
 
     func dial(_ peer: NodeID) {
         // A relayed peer keeps its room open for the renewal, so a dropped socket has to be redialed.
-        guard started, rooms[peer] == nil, relays[peer] != nil || !hasLink(peer) else { return }
+        guard started, rooms[peer] == nil, hasRelayedLink(peer) || !hasLink(peer) else { return }
         let room = PairRoom.name(identity.nodeID, peer)
         let task = URLSession.shared.webSocketTask(with: rendezvous.appendingPathComponent(room))
         rooms[peer] = task
@@ -312,8 +314,8 @@ final class InternetTransport: Transport, @unchecked Sendable {
 
     /// `client` is the allocation that carried this datagram; PRD R14 reads it back off the endpoint.
     func deliver(_ data: Data, host: String, port: UInt16, via client: TURNClient?) {
-        let endpoint = client == nil ? "\(host):\(port)" : "relay:\(host):\(port)"
-        let link = LinkID(transport: id, endpoint: endpoint)
+        let relayed = client != nil || isPeerRelay(host: host, port: port)
+        let link = LinkID(transport: id, endpoint: relayed ? "relay:\(host):\(port)" : "\(host):\(port)")
         adopt(client, for: link)
         // A punch only proves the inbound direction, so it is answered but never brings a link up;
         // the ack that comes back proves the round trip and does.
@@ -344,10 +346,12 @@ final class InternetTransport: Transport, @unchecked Sendable {
     }
 
     private func bringUp(_ link: LinkID, peer: NodeID, host: String, port: UInt16, via client: TURNClient?) {
-        links[link] = Link(peer: peer, host: host, port: port, lastHeard: Date(), relay: client)
+        let relayed = link.endpoint.hasPrefix("relay:")
+        links[link] = Link(peer: peer, host: host, port: port, lastHeard: Date(), relay: client, relayed: relayed)
         punching[peer] = nil
-        // PRD R9 renews TURN credentials over this same room, so a relayed link keeps it open.
-        if relays[peer] == nil { closeRoom(peer) }
+        // PRD R9 renews TURN credentials over this same room. The renewed address reaches the other
+        // end as an offer, so the room stays open on both ends of a relayed path, not just the payer's.
+        if !relayed { closeRoom(peer) }
         if client != nil, relays[peer] === client { retire(peer) }
         logger.notice("link up \(link.description, privacy: .public) to \(peer.description, privacy: .public)")
         continuation.yield(.linkUp(link))
@@ -378,5 +382,14 @@ final class InternetTransport: Transport, @unchecked Sendable {
 
     func hasLink(_ peer: NodeID) -> Bool {
         links.values.contains { $0.peer == peer }
+    }
+
+    func hasRelayedLink(_ peer: NodeID) -> Bool {
+        relays[peer] != nil || links.values.contains { $0.peer == peer && $0.relayed }
+    }
+
+    /// An address the peer offered as its TURN allocation.
+    private func isPeerRelay(host: String, port: UInt16) -> Bool {
+        theirs.values.contains { $0.contains { $0.kind == .relay && $0.host == host && $0.port == port } }
     }
 }
