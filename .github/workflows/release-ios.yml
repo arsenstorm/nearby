@@ -65,8 +65,8 @@ jobs:
           fi
           echo "BUILD_NUMBER=$GITHUB_RUN_NUMBER.$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
 
-      # Archive signs with the imported distribution certificate: the default automatic flow
-      # mints a fresh development certificate per ephemeral runner until the account cap kills it.
+      # Automatic signing dev-signs the archive (export re-signs for the store), so the runner
+      # mints a development certificate per run: the account's dev-cert list needs occasional pruning.
       - name: Archive
         run: |
           xcodebuild archive \
@@ -78,7 +78,6 @@ jobs:
             -authenticationKeyPath "$RUNNER_TEMP/asc/AuthKey_$ASC_KEY_ID.p8" \
             -authenticationKeyID "$ASC_KEY_ID" \
             -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
-            CODE_SIGN_IDENTITY="Apple Distribution" \
             CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
             $MARKETING_VERSION_OVERRIDE
 
