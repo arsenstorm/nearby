@@ -41,6 +41,10 @@ final class NATProbe: @unchecked Sendable {
     var localPort: UInt16 { socket.port }
 
     private static let stunServers: [(host: String, port: UInt16)] = [("stun.cloudflare.com", 3478), ("stun.l.google.com", 19302)]
+    // Distinct IPs: a NAT that maps per destination shows a different port on each.
+    private static let reflectors: [(host: String, port: UInt16)] = [
+        ("stun.cloudflare.com", 3478), ("stun.l.google.com", 19302), ("stun1.l.google.com", 19302), ("stun2.l.google.com", 19302),
+    ]
     private static let cookie = Data([0x21, 0x12, 0xA4, 0x42])
 
     private let queue = DispatchQueue(label: "nearby.natprobe")
@@ -125,6 +129,30 @@ final class NATProbe: @unchecked Sendable {
         guard !host.hasPrefix("fe80"), !host.hasPrefix("fd"), !host.hasPrefix("fc"), host != "::1" else { return nil }
         return Candidate(kind: .v6, host: host, port: localPort)
     }
+    // MARK: - Mapping classification
+
+    struct MappingReport {
+        var mappings: [(server: String, host: String, port: UInt16)] = []
+        var verdict: String {
+            let ports = Set(mappings.map(\.port))
+            guard mappings.count >= 2 else { return "unknown: fewer than two reflectors answered" }
+            if ports.count == 1 { return "endpoint-independent mapping (cone): direct punch works" }
+            let sorted = mappings.map(\.port).sorted()
+            let deltas = zip(sorted, sorted.dropFirst()).map { String(Int($1) - Int($0)) }
+            return "port-dependent mapping (symmetric): direct punch fails; birthday spray needed. deltas \(deltas.joined(separator: ","))"
+        }
+    }
+
+    /// STUN to several reflectors from the one socket and compare the ports they report.
+    func classifyMapping() async -> MappingReport {
+        var report = MappingReport()
+        for server in Self.reflectors {
+            guard let mapped = try? await stunQuery(v6: false, server: server) else { continue }
+            report.mappings.append((server.host, mapped.host, mapped.port))
+        }
+        return report
+    }
+
     // MARK: - STUN
 
     private func stunQuery(v6: Bool, server: (host: String, port: UInt16)) async throws -> Candidate {
