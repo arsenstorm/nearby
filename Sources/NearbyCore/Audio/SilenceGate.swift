@@ -8,26 +8,39 @@ public struct SilenceGate: Sendable {
 
     private let ratio: Float
     private let hangoverFrames: Int
+    private let onsetFrames: Int
     private var floor: Float
     private var hangover = 0
+    private var onset = 0
     private var gatedFrames = 0
+    public private(set) var justOpened = false
 
     /// - ratio: how far above the tracked noise floor a frame must be to count as speech (3 ≈ +10 dB).
     /// - hangoverMs: how long after the last speech frame to keep sending, so word tails survive.
-    public init(ratio: Float = 3, hangoverMs: Int = 300, initialFloor: Float = 0.002) {
+    /// - onsetMs: how long a sound must stay above threshold before it opens the gate; a keyboard
+    ///   click is over inside one frame, a word is not.
+    public init(ratio: Float = 3, hangoverMs: Int = 300, onsetMs: Int = 0, initialFloor: Float = 0.002) {
         self.ratio = ratio
         self.hangoverFrames = hangoverMs / Opus.frameMs
+        self.onsetFrames = max(onsetMs / Opus.frameMs, 1)
         self.floor = initialFloor
     }
 
     /// True when the frame should be encoded and sent.
     public mutating func admits(rms: Float) -> Bool {
+        justOpened = false
         // Floor follows quiet frames quickly and loud ones slowly, so speech does not lift it.
         floor += (rms < floor ? 0.2 : 0.005) * (rms - floor)
         if rms > max(floor * ratio, 0.001) {
-            hangover = hangoverFrames
-            gatedFrames = 0
-            return true
+            onset += 1
+            if onset >= onsetFrames {
+                justOpened = (hangover == 0 && onsetFrames > 1)
+                hangover = hangoverFrames
+                gatedFrames = 0
+                return true
+            }
+        } else {
+            onset = 0
         }
         if hangover > 0 {
             hangover -= 1
