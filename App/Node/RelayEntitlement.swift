@@ -92,10 +92,17 @@ enum RelayEntitlement: Equatable, Sendable {
 
     private static func subscription() async -> Proof? {
         for await result in Transaction.currentEntitlements(for: productID) {
-            guard case .verified(let transaction) = result, transaction.revocationDate == nil,
-                  transaction.expirationDate.map({ $0 > Date() }) ?? true
+            guard case .verified(let transaction) = result, transaction.revocationDate == nil else { continue }
+            if transaction.expirationDate.map({ $0 > Date() }) ?? true {
+                return (.subscriber(expires: transaction.expirationDate), result.jwsRepresentation)
+            }
+            // Lapsed but still listed: Apple is retrying billing. The grace end lives in the renewal
+            // info, so that JWS rides along after a comma; the Worker splits it (see web/src/apple.ts).
+            guard let status = try? await transaction.subscriptionStatus,
+                  case .verified(let renewal) = status.renewalInfo,
+                  let grace = renewal.gracePeriodExpirationDate, grace > Date()
             else { continue }
-            return (.subscriber(expires: transaction.expirationDate), result.jwsRepresentation)
+            return (.subscriber(expires: grace), result.jwsRepresentation + "," + status.renewalInfo.jwsRepresentation)
         }
         return nil
     }
