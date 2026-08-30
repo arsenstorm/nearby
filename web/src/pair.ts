@@ -156,7 +156,8 @@ export class PairRoom extends DurableObject<Env> {
     };
     const key = `attest:${slot.nodeID}`;
     let stored = await this.env.RELAY.get<Attested>(key, "json");
-    if (!stored) {
+    // A fresh attestation replaces the stored key: a client that lost or reset its key must be able to re-enrol.
+    if (!stored || relay.attestation) {
       if (!relay.attestation) return false;
       const keyId = base64(relay.keyId);
       const fresh = await verifyAttestation(base64(relay.attestation), unhex(slot.nonce), keyId, opts);
