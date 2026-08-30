@@ -22,6 +22,7 @@ final class InternetTransport: Transport, @unchecked Sendable {
     private let logger = Logger(subsystem: "com.arsenstorm.nearby", category: "internet")
     private let identity: Identity
     private let rendezvous: URL
+    private let relayCredentials: @Sendable (NodeID) async -> TURNCredentials?
 
     private var socket: UDPSocket?
     private var probe: NATProbe?
@@ -29,8 +30,10 @@ final class InternetTransport: Transport, @unchecked Sendable {
     private var peers: Set<NodeID> = []
     private var rooms: [NodeID: URLSessionWebSocketTask] = [:]
     private var offered: Set<NodeID> = []
+    private var mine: [NodeID: [Candidate]] = [:]
     private var punching: [NodeID: (candidates: [Candidate], deadline: Date)] = [:]
     private var links: [LinkID: Link] = [:]
+    private var relays: [NodeID: TURNClient] = [:]
     private var keepaliveTimer: DispatchSourceTimer?
 
     private struct Link {
@@ -40,9 +43,11 @@ final class InternetTransport: Transport, @unchecked Sendable {
         var lastHeard: Date
     }
 
-    init(identity: Identity, rendezvous: URL = URL(string: "wss://nearby.arsenstorm.com/pair/")!) {
+    init(identity: Identity, rendezvous: URL = URL(string: "wss://nearby.arsenstorm.com/pair/")!,
+         relayCredentials: @escaping @Sendable (NodeID) async -> TURNCredentials? = { _ in nil }) {
         self.identity = identity
         self.rendezvous = rendezvous
+        self.relayCredentials = relayCredentials
         (self.events, self.continuation) = AsyncStream.makeStream(of: TransportEvent.self)
     }
 
@@ -86,6 +91,8 @@ final class InternetTransport: Transport, @unchecked Sendable {
                 rooms.removeAll()
                 offered.removeAll()
                 punching.removeAll()
+                for relay in relays.values { relay.close() }
+                relays.removeAll()
                 for link in links.keys { continuation.yield(.linkDown(link)) }
                 links.removeAll()
                 socket?.shutdown()
@@ -99,10 +106,10 @@ final class InternetTransport: Transport, @unchecked Sendable {
     func send(_ data: Data, over link: LinkID) async throws {
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
             queue.async { [self] in
-                guard let state = links[link], let socket else {
+                guard let state = links[link] else {
                     return cont.resume(throwing: TransportError.unknownLink(link))
                 }
-                socket.send(data, to: state.host, port: state.port)
+                sendRaw(data, host: state.host, port: state.port, relay: relayed(link) ? state.peer : nil)
                 cont.resume()
             }
         }
@@ -194,6 +201,7 @@ final class InternetTransport: Transport, @unchecked Sendable {
         guard let hello = try? Hello(identity: identity, name: "", timestampMs: timestampMs),
               let encoded = try? hello.encode()
         else { return }
+        mine[peer] = candidates.filter { $0.kind != .relay }
         send(["t": "offer", "hello": encoded.base64EncodedString(), "candidates": candidates.map(\.text)], on: task)
         logger.notice("offer sent to \(peer.description, privacy: .public), \(candidates.count) candidates")
     }
@@ -238,10 +246,64 @@ final class InternetTransport: Transport, @unchecked Sendable {
     }
 
     private func punchTick(_ peer: NodeID, deadline: Date) {
-        guard let state = punching[peer], state.deadline == deadline, let socket else { return }
-        guard Date() < deadline else { return punching[peer] = nil }
-        for candidate in state.candidates { socket.send(Self.punch, to: candidate.host, port: candidate.port) }
+        guard let state = punching[peer], state.deadline == deadline, socket != nil else { return }
+        guard Date() < deadline else {
+            punching[peer] = nil
+            return startRelay(peer, candidates: state.candidates)
+        }
+        // Once a relay is allocated the punch goes through it: the direct path already had its window.
+        let relay = relays[peer] != nil ? peer : nil
+        for candidate in state.candidates {
+            sendRaw(Self.punch, host: candidate.host, port: candidate.port, relay: relay)
+        }
         queue.asyncAfter(deadline: .now() + 0.05) { [weak self] in self?.punchTick(peer, deadline: deadline) }
+    }
+
+    // MARK: - Relay
+
+    /// PRD R7/R9: only after the direct window fails do we pay for a TURN allocation.
+    private func startRelay(_ peer: NodeID, candidates: [Candidate]) {
+        guard started, relays[peer] == nil, !hasLink(peer) else { return }
+        Task { [weak self, relayCredentials] in
+            guard let credentials = await relayCredentials(peer) else { return }
+            self?.queue.async { [weak self] in self?.beginRelay(peer, candidates: candidates, credentials: credentials) }
+        }
+    }
+
+    private func beginRelay(_ peer: NodeID, candidates: [Candidate], credentials: TURNCredentials) {
+        guard started, relays[peer] == nil, let socket else { return }
+        let client = TURNClient(credentials: credentials,
+                                send: { [weak socket] data, host, port in socket?.send(data, to: host, port: port) },
+                                queue: queue)
+        client.onRelayed = { [weak self] relayed in self?.relayReady(peer, relayed: relayed, candidates: candidates) }
+        client.onData = { [weak self] payload, host, port in
+            self?.deliver(payload, host: host, port: port, relay: peer)
+        }
+        client.onFailure = { [weak self] _ in self?.dropRelay(peer) }
+        relays[peer] = client
+        client.allocate()
+        logger.notice("relay allocating for \(peer.description, privacy: .public)")
+    }
+
+    private func relayReady(_ peer: NodeID, relayed: (host: String, port: UInt16), candidates: [Candidate]) {
+        // The relay drops anything from an address it has no permission for (RFC 8656 §9).
+        for host in Set(candidates.map(\.host)) { relays[peer]?.permit(host: host) }
+        if let task = rooms[peer] {
+            let relay = Candidate(kind: .relay, host: relayed.host, port: relayed.port)
+            finishOffer(task, peer: peer, candidates: (mine[peer] ?? []) + [relay])
+        }
+        startPunch(peer, candidates: candidates)
+    }
+
+    private func dropRelay(_ peer: NodeID) {
+        relays.removeValue(forKey: peer)?.close()
+    }
+
+    private func relayed(_ link: LinkID) -> Bool { link.endpoint.hasPrefix("relay:") }
+
+    private func sendRaw(_ data: Data, host: String, port: UInt16, relay: NodeID?) {
+        guard let relay, let client = relays[relay] else { return socket?.send(data, to: host, port: port) ?? () }
+        client.send(data, to: host, port: port)
     }
 
     /// A symmetric NAT rewrites the source port per destination, so the peer can arrive from a port it never advertised.
@@ -254,8 +316,15 @@ final class InternetTransport: Transport, @unchecked Sendable {
 
     private func received(_ data: Data, _ host: String, _ port: UInt16) {
         if probe?.handleDatagram(data) == true { return }
-        let link = LinkID(transport: id, endpoint: "\(host):\(port)")
-        if data == Self.punch { socket?.send(Self.ack, to: host, port: port) }
+        for client in relays.values where client.handle(data, from: host, port: port) { return }
+        deliver(data, host: host, port: port, relay: nil)
+    }
+
+    /// `relay` names the peer whose allocation carried this datagram; PRD R14 reads it back off the endpoint.
+    private func deliver(_ data: Data, host: String, port: UInt16, relay: NodeID?) {
+        let endpoint = relay == nil ? "\(host):\(port)" : "relay:\(host):\(port)"
+        let link = LinkID(transport: id, endpoint: endpoint)
+        if data == Self.punch { sendRaw(Self.ack, host: host, port: port, relay: relay) }
         guard data != Self.punch, data != Self.ack else { return receivedPunch(link, host: host, port: port) }
         guard links[link] != nil else { return }
         links[link]?.lastHeard = Date()
@@ -289,11 +358,12 @@ final class InternetTransport: Transport, @unchecked Sendable {
             guard now.timeIntervalSince(state.lastHeard) <= Self.linkTimeout else {
                 links[link] = nil
                 logger.notice("link down \(link.description, privacy: .public)")
+                if relayed(link) { dropRelay(state.peer) }
                 continuation.yield(.linkDown(link))
                 dial(state.peer)
                 continue
             }
-            socket?.send(Self.ack, to: state.host, port: state.port)
+            sendRaw(Self.ack, host: state.host, port: state.port, relay: relayed(link) ? state.peer : nil)
         }
     }
 
