@@ -23,19 +23,36 @@ final class InternetTransport: Transport, @unchecked Sendable {
     let identity: Identity
     private let rendezvous: URL
     private let entitlement: @Sendable () async -> String?
+    let hooks: Hooks
+
+    /// The App Attest material a relay request carries (PRD R17); nil where App Attest is unavailable.
+    struct RelayProof: Sendable {
+        let keyID: String
+        let attestation: Data?
+        let assertion: Data
+    }
+
+    struct Hooks: Sendable {
+        /// Builds a proof over the entitlement JWS and this room's challenge nonce.
+        var attest: @Sendable (_ jws: String, _ nonce: Data) async -> RelayProof? = { _, _ in nil }
+        var attestationAccepted: @Sendable (_ keyID: String) -> Void = { _ in }
+        var attestationRejected: @Sendable () -> Void = {}
+    }
 
     private var socket: UDPSocket?
     var probe: NATProbe?
     var started = false
     private var peers: Set<NodeID> = []
     var rooms: [NodeID: URLSessionWebSocketTask] = [:]
+    /// The challenge nonce of each open room; the App Attest assertion signs over it.
+    var nonces: [NodeID: Data] = [:]
     var offered: Set<NodeID> = []
     var mine: [NodeID: [Candidate]] = [:]
     private var punching: [NodeID: (candidates: [Candidate], deadline: Date)] = [:]
     private var links: [LinkID: Link] = [:]
     var relays: [NodeID: TURNClient] = [:]
     /// A relay asked for but not yet answered; the reply needs the candidates the punch failed on.
-    var pendingRelay: [NodeID: (jws: String, candidates: [Candidate])] = [:]
+    var pendingRelay: [NodeID: (jws: String, candidates: [Candidate], proof: RelayProof?)] = [:]
     private var keepaliveTimer: DispatchSourceTimer?
 
     private struct Link {
@@ -46,10 +63,12 @@ final class InternetTransport: Transport, @unchecked Sendable {
     }
 
     init(identity: Identity, rendezvous: URL = URL(string: "wss://nearby.arsenstorm.com/pair/")!,
-         entitlement: @escaping @Sendable () async -> String? = { nil }) {
+         entitlement: @escaping @Sendable () async -> String? = { nil },
+         hooks: Hooks = Hooks()) {
         self.identity = identity
         self.rendezvous = rendezvous
         self.entitlement = entitlement
+        self.hooks = hooks
         (self.events, self.continuation) = AsyncStream.makeStream(of: TransportEvent.self)
     }
 
@@ -91,6 +110,7 @@ final class InternetTransport: Transport, @unchecked Sendable {
                 keepaliveTimer = nil
                 for (_, task) in rooms { task.cancel() }
                 rooms.removeAll()
+                nonces.removeAll()
                 offered.removeAll()
                 punching.removeAll()
                 pendingRelay.removeAll()
@@ -160,6 +180,7 @@ final class InternetTransport: Transport, @unchecked Sendable {
 
     func closeRoom(_ peer: NodeID) {
         rooms.removeValue(forKey: peer)?.cancel()
+        nonces.removeValue(forKey: peer)
         offered.remove(peer)
     }
 

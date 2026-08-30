@@ -84,11 +84,12 @@ struct DebugView: View {
     }
 
     private var relayLine: String {
-        switch node.relayEntitlement {
+        let entitlement = switch node.relayEntitlement {
         case .freeDirectOnly: "Free (direct only)"
         case .subscriber: "Subscriber"
         case .beta: "Beta build"
         }
+        return "\(entitlement) · \(node.attestState)"
     }
 
     private var mouthToEarMs: Double {
