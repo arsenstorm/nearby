@@ -41,6 +41,7 @@ final class NearbyNode {
     var paywall: PaywallPrompt?
     private var paywallShown: Set<NodeID> = []
     var attestState: String = AppAttest.isSupported ? "unattested" : "no App Attest"
+    var relayError: String?
     var jitterTargetDepth: Int = 2 {
         didSet { audio?.jitterTargetDepth = jitterTargetDepth }
     }
@@ -130,6 +131,11 @@ final class NearbyNode {
         guard started else { return }
         logger.notice("resuming transports after background")
         for (id, transport) in transports where transportStates[id]?.enabled == true {
+            // A relayed call survives the background; restarting it here is what used to drop it.
+            if let internet = transport as? InternetTransport {
+                internet.resume()
+                continue
+            }
             dropLinks(for: id)
             Task { @MainActor [self] in
                 await transport.stop()
@@ -198,7 +204,8 @@ final class NearbyNode {
                 AppAttest.reset()
                 report("unattested")
             },
-            relayUnavailable: { peer, _ in Task { @MainActor in current?.relayNeeded(peer) } })
+            relayUnavailable: { peer, _ in Task { @MainActor in current?.relayNeeded(peer) } },
+            relayFailed: { reason in Task { @MainActor in current?.relayError = reason } })
     }
 
     nonisolated private static func proof(jws: String, nonce: Data) async -> InternetTransport.RelayProof? {

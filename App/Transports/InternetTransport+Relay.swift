@@ -35,8 +35,9 @@ extension InternetTransport {
         client.onData = { [weak self, weak client] payload, host, port in
             self?.deliver(payload, host: host, port: port, via: client)
         }
-        client.onFailure = { [weak self, weak client] _ in
+        client.onFailure = { [weak self, weak client] error in
             guard let client else { return }
+            self?.hooks.relayFailed("\(Self.clock()) \(error)")
             self?.dropRelay(peer, only: client)
         }
         if renewal { retiring[peer] = relays[peer] }
@@ -95,6 +96,10 @@ extension InternetTransport {
     func dropRelay(_ peer: NodeID, only client: TURNClient? = nil) {
         if client == nil || retiring[peer] === client { retiring.removeValue(forKey: peer)?.close() }
         if client == nil || relays[peer] === client { relays.removeValue(forKey: peer)?.close() }
+    }
+
+    private static func clock() -> String {
+        let f = DateFormatter(); f.dateFormat = "HH:mm:ss"; return f.string(from: Date())
     }
 
     static func isPublic(_ host: String) -> Bool {

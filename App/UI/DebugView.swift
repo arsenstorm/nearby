@@ -27,6 +27,9 @@ struct DebugView: View {
                 }
                 Toggle("internet: relay only", isOn: $relayOnly)
                 LabeledContent("Relay", value: relayLine)
+                if let error = node.relayError {
+                    LabeledContent("Last relay error", value: error).font(.footnote)
+                }
                 NavigationLink("Wi-Fi Aware pairing") { WiFiAwarePairingView() }
             }
 

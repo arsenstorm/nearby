@@ -53,7 +53,11 @@ final class TURNClient: @unchecked Sendable {
     private let logger = Logger(subsystem: "com.arsenstorm.nearby", category: "turn")
 
     /// UDPSocket only sends to numeric literals, so the server name is resolved once up front.
-    private lazy var serverAddress = NATProbe.addresses(credentials.server.host).first ?? credentials.server.host
+    // Prefer IPv4: the v6 record answers nothing from some networks, and a relayed peer is v4 anyway.
+    private lazy var serverAddress: String = {
+        let addresses = NATProbe.addresses(credentials.server.host)
+        return addresses.first { !$0.contains(":") } ?? addresses.first ?? credentials.server.host
+    }()
     private var realm: String?
     private var nonce: Data?
     private var pending: [Data: Pending] = [:]
