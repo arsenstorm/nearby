@@ -17,8 +17,10 @@ final class InternetTransport: Transport, @unchecked Sendable {
     private static let keepaliveInterval: TimeInterval = 15
     private static let linkTimeout: TimeInterval = 45
     private static let retryDelay: TimeInterval = 30
-    /// How long a probed link may stay silent before it is declared dead.
-    private static let probeTimeout: TimeInterval = 3
+    /// How long a probed link may stay silent before it is declared dead. Cellular loses the odd
+    /// datagram, so a probe is three punches a second apart, not one.
+    private static let probeTimeout: TimeInterval = 5
+    private static let probePunches = 3
     /// An offer that lands this soon after ours is the peer answering it, not a peer still waiting.
     static let offerEcho: TimeInterval = 2
     /// Debug switch: never punch directly, so two simulators on one Mac must go through TURN.
@@ -224,7 +226,14 @@ final class InternetTransport: Transport, @unchecked Sendable {
     func probeLinks(to peer: NodeID? = nil) {
         let asked = Date()
         let suspects = links.filter { peer == nil || $0.value.peer == peer }
-        for state in suspects.values { sendRaw(Self.punch, host: state.host, port: state.port, via: state.relay) }
+        for attempt in 0..<Self.probePunches {
+            queue.asyncAfter(deadline: .now() + Double(attempt)) { [weak self] in
+                guard let self else { return }
+                for (link, state) in suspects where links[link] != nil {
+                    sendRaw(Self.punch, host: state.host, port: state.port, via: state.relay)
+                }
+            }
+        }
         queue.asyncAfter(deadline: .now() + Self.probeTimeout) { [weak self] in
             guard let self else { return }
             for link in suspects.keys where links[link].map({ $0.lastHeard < asked }) == true { drop(link) }
