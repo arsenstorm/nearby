@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "nearby-web",
+  "name": "nearby",
   "account_id": "8dd0864e5cce87fba700990f062744f0",
   "compatibility_date": "2026-07-07",
   // Static site only: landing page plus the privacy and support pages App Store Connect links to.
