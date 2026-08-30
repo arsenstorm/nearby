@@ -51,6 +51,11 @@ struct DebugView: View {
                     value: $node.jitterTargetDepth,
                     in: 1...25
                 )
+                Stepper(
+                    "Internet jitter: \(node.internetJitterTargetDepth) × \(Opus.internetFrameMs) ms",
+                    value: $node.internetJitterTargetDepth,
+                    in: 1...10
+                )
                 VStack(alignment: .leading) {
                     Text("Multipath when loss > \(Int(node.multipathLossThreshold * 100))%")
                     Slider(value: $node.multipathLossThreshold, in: 0...0.5, step: 0.01)

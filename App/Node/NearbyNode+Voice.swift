@@ -34,7 +34,7 @@ extension NearbyNode {
         if audio == nil {
             // An AsyncStream keeps frames in capture order; a Task per frame would let the main actor
             // stamp sequence numbers out of order, and the receiver would drop the reordered frames.
-            let (frames, continuation) = AsyncStream.makeStream(of: Data.self)
+            let (frames, continuation) = AsyncStream.makeStream(of: VoiceFrame.self)
             audio = AudioEngine { frame in continuation.yield(frame) }
             outgoingVoice = Task { @MainActor [weak self] in
                 for await frame in frames { self?.sendVoice(frame) }
@@ -42,6 +42,7 @@ extension NearbyNode {
         }
         guard let audio else { return }
         audio.jitterTargetDepth = jitterTargetDepth
+        audio.internetJitterTargetDepth = internetJitterTargetDepth
         do {
             try audio.start()
         } catch {
@@ -67,11 +68,21 @@ extension NearbyNode {
         roomKey = nil
     }
 
+    /// Runs on every path refresh too: addStream only rebuilds when a peer's link class changed.
     func syncStreams() {
         let wanted = Set(currentMembers.map(\.id)).subtracting([nodeID])
-        for id in wanted.subtracting(streamPeers) { audio?.addStream(id) }
+        for id in wanted { audio?.addStream(id, internet: reachedOverInternet(id)) }
         for id in streamPeers.subtracting(wanted) { audio?.removeStream(id) }
         streamPeers = wanted
+    }
+
+    private func reachedOverInternet(_ member: NodeID) -> Bool {
+        mesh.nextLink(to: member)?.transport == .internet
+    }
+
+    /// Internet links carry 20 ms frames, local links 10 ms, so each member gets exactly one copy.
+    private func carries(_ link: LinkID, _ frame: VoiceFrame) -> Bool {
+        (link.transport == .internet) == (frame.durationMs == Opus.internetFrameMs)
     }
 
     private func nextVoiceSequence(for member: NodeID) -> UInt32 {
@@ -90,21 +101,24 @@ extension NearbyNode {
     }
 
     /// One sealed copy per member: a relay must not dedup-drop the copy addressed to a different member, so each copy carries its own sequence.
-    private func sendVoice(_ frame: Data) {
+    private func sendVoice(_ frame: VoiceFrame) {
         guard inCall, !muted, let roomKey else { return }
         let now = Date()
         for member in currentMembers where member.id != nodeID {
-            guard let link = mesh.nextLink(to: member.id) else { continue }
+            guard let link = mesh.nextLink(to: member.id), carries(link, frame) else { continue }
             let header = PacketHeader(
                 type: .voice, source: nodeID, destination: member.id,
                 stream: 1, sequence: nextVoiceSequence(for: member.id)
             )
-            guard let sealed = try? roomKey.seal(frame, header: header) else { continue }
+            guard let sealed = try? roomKey.seal(frame.data, header: header) else { continue }
             let data = Packet(header: header, payload: sealed).encode()
             transmit(data, over: link)
-            if let alternate = multipathLink(alongside: link, to: member.id, now: now) {
-                transmit(data, over: alternate)
-            }
+            // PRD R14: a metered internet link never carries the duplicate.
+            guard link.transport != .internet,
+                  let alternate = multipathLink(alongside: link, to: member.id, now: now),
+                  carries(alternate, frame)
+            else { continue }
+            transmit(data, over: alternate)
         }
     }
 
