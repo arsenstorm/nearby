@@ -47,6 +47,8 @@ final class InternetTransport: Transport, @unchecked Sendable {
         var attestationRejected: @Sendable () -> Void = {}
         /// A relay is the only way to this peer and this device cannot pay for one.
         var relayUnavailable: @Sendable (_ peer: NodeID, _ reason: String) -> Void = { _, _ in }
+        /// An allocation died; the text is what the Debug screen shows, since phone logs are hard to reach.
+        var relayFailed: @Sendable (_ reason: String) -> Void = { _ in }
     }
 
     private var socket: UDPSocket?
