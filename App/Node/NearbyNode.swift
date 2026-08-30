@@ -40,6 +40,10 @@ final class NearbyNode {
     var jitterTargetDepth: Int = 2 {
         didSet { audio?.jitterTargetDepth = jitterTargetDepth }
     }
+    /// Frames of 20 ms, for peers reached over the internet.
+    var internetJitterTargetDepth: Int = 3 {
+        didSet { audio?.internetJitterTargetDepth = internetJitterTargetDepth }
+    }
 
     private static let displayNameKey = "displayName"
     static let peerTimeout: TimeInterval = 5

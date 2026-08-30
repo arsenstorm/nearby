@@ -69,6 +69,8 @@ extension NearbyNode {
             logger.notice("path to \(id.description, privacy: .public): \(path.hops) hops via \(path.nextLink?.description ?? "-", privacy: .public) cost \(Int(path.costMs)) ms")
         }
         pathInfo = info
+        // A peer that moved between a local link and the internet needs the other frame size.
+        if inCall { syncStreams() }
     }
 
     func prune() {

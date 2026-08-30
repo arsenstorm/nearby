@@ -3,24 +3,34 @@ import Foundation
 import NearbyCore
 import os
 
+/// One encoded packet with the frame length it covers, so the router can match it to a link class.
+struct VoiceFrame: Sendable {
+    let data: Data
+    let durationMs: Int
+}
+
 /// Owns AVAudioSession and AVAudioEngine. Encoded frames leave through onFrame; received frames arrive through push.
 final class AudioEngine: @unchecked Sendable {
     private final class Stream: @unchecked Sendable {
         var jitter: JitterBuffer
         let decoder: OpusDecoder
-        var pcm = [Float](repeating: 0, count: Opus.frameSamples)
-        var readIndex = Opus.frameSamples
+        let internet: Bool
+        var pcm = [Float](repeating: 0, count: Opus.internetFrameSamples)
+        /// Samples the last decode produced; the codec's pre-skip makes the first one short.
+        var validCount = 0
+        var readIndex = 0
 
-        init(jitter: JitterBuffer, decoder: OpusDecoder) {
+        init(jitter: JitterBuffer, decoder: OpusDecoder, internet: Bool) {
             self.jitter = jitter
             self.decoder = decoder
+            self.internet = internet
         }
 
         func mix(into out: UnsafeMutablePointer<Float>, count: Int) {
             var written = 0
             while written < count {
-                if readIndex >= pcm.count { refill() }
-                let take = min(count - written, pcm.count - readIndex)
+                if readIndex >= validCount { refill() }
+                let take = min(count - written, validCount - readIndex)
                 for i in 0..<take { out[written + i] += pcm[readIndex + i] }
                 written += take
                 readIndex += take
@@ -29,15 +39,17 @@ final class AudioEngine: @unchecked Sendable {
 
         /// Refills `pcm` from the jitter buffer, or with silence when nothing decodes.
         private func refill() {
-            var decoded = false
+            var produced = 0
             if case .frame(let data) = jitter.pop(), !data.isEmpty {
-                decoded = (try? pcm.withUnsafeMutableBufferPointer {
+                produced = (try? pcm.withUnsafeMutableBufferPointer {
                     try decoder.decode(data, into: $0)
-                }) != nil
+                }) ?? 0
             }
-            if !decoded {
-                for i in 0..<pcm.count { pcm[i] = 0 }
+            if produced == 0 {
+                for i in 0..<decoder.frameSamples { pcm[i] = 0 }
+                produced = decoder.frameSamples
             }
+            validCount = produced
             readIndex = 0
         }
     }
@@ -45,10 +57,11 @@ final class AudioEngine: @unchecked Sendable {
     private struct Shared {
         var streams: [NodeID: Stream] = [:]
         var targetDepth = 3
+        var internetTargetDepth = 3
         var running = false
     }
 
-    private let onFrame: @Sendable (Data) -> Void
+    private let onFrame: @Sendable (VoiceFrame) -> Void
     private let engine = AVAudioEngine()
     private let codecFormat = AVAudioFormat(
         commonFormat: .pcmFormatFloat32, sampleRate: Opus.sampleRate, channels: 1, interleaved: false)!
@@ -58,6 +71,10 @@ final class AudioEngine: @unchecked Sendable {
 
     /// Sink (render) thread only.
     private var encoder: OpusEncoder?
+    /// Sink (render) thread only. Internet links carry 20 ms packets, built from pairs of 10 ms frames.
+    private var wideEncoder: OpusEncoder?
+    /// Sink (render) thread only.
+    private var wideScratch: [Float] = []
     private var gate = SilenceGate()
     /// Sink (render) thread only.
     private var converter: AVAudioConverter?
@@ -75,7 +92,7 @@ final class AudioEngine: @unchecked Sendable {
     /// start/stop only.
     private var observers: [NSObjectProtocol] = []
 
-    init(onFrame: @escaping @Sendable (Data) -> Void) {
+    init(onFrame: @escaping @Sendable (VoiceFrame) -> Void) {
         self.onFrame = onFrame
     }
 
@@ -92,7 +109,18 @@ final class AudioEngine: @unchecked Sendable {
         set {
             shared.withLock {
                 $0.targetDepth = newValue
-                for stream in $0.streams.values { stream.jitter.targetDepth = newValue }
+                for stream in $0.streams.values where !stream.internet { stream.jitter.targetDepth = newValue }
+            }
+        }
+    }
+
+    /// Frames of 20 ms. Internet paths jitter more than local ones, so they buffer deeper.
+    var internetJitterTargetDepth: Int {
+        get { shared.withLock { $0.internetTargetDepth } }
+        set {
+            shared.withLock {
+                $0.internetTargetDepth = newValue
+                for stream in $0.streams.values where stream.internet { stream.jitter.targetDepth = newValue }
             }
         }
     }
@@ -114,9 +142,11 @@ final class AudioEngine: @unchecked Sendable {
         try engine.inputNode.setVoiceProcessingEnabled(true)
 
         encoder = try OpusEncoder()
+        wideEncoder = try OpusEncoder(frameMs: Opus.internetFrameMs)
         converter = nil
         converterInputFormat = nil
         accumulator.removeAll(keepingCapacity: true)
+        wideScratch.removeAll(keepingCapacity: true)
 
         // A tap ignores its bufferSize on iOS and hands over ~100 ms chunks; a sink sees every IO cycle.
         let input = engine.inputNode
@@ -180,13 +210,20 @@ final class AudioEngine: @unchecked Sendable {
         for token in observers { NotificationCenter.default.removeObserver(token) }
         observers.removeAll()
         encoder = nil
+        wideEncoder = nil
         shared.withLock { $0.running = false }
     }
 
-    func addStream(_ peer: NodeID) {
+    /// Idempotent while the peer's link class holds; a switch between local and internet rebuilds the
+    /// stream, because a decoder is bound to one frame size.
+    func addStream(_ peer: NodeID, internet: Bool) {
         shared.withLock {
-            guard $0.streams[peer] == nil, let decoder = try? OpusDecoder() else { return }
-            $0.streams[peer] = Stream(jitter: JitterBuffer(targetDepth: $0.targetDepth), decoder: decoder)
+            guard $0.streams[peer]?.internet != internet else { return }
+            let frameMs = internet ? Opus.internetFrameMs : Opus.frameMs
+            guard let decoder = try? OpusDecoder(frameMs: frameMs) else { return }
+            let depth = internet ? $0.internetTargetDepth : $0.targetDepth
+            $0.streams[peer] = Stream(
+                jitter: JitterBuffer(targetDepth: depth), decoder: decoder, internet: internet)
         }
     }
 
@@ -264,14 +301,35 @@ final class AudioEngine: @unchecked Sendable {
         }
         guard error == nil, let samples = converted.floatChannelData?[0] else { return }
         accumulator.append(contentsOf: UnsafeBufferPointer(start: samples, count: Int(converted.frameLength)))
+        drainAccumulator(through: encoder)
+    }
 
+    private func drainAccumulator(through encoder: OpusEncoder) {
         while accumulator.count >= Opus.frameSamples {
             for i in 0..<Opus.frameSamples { scratch[i] = accumulator[i] }
             accumulator.removeFirst(Opus.frameSamples)
-            guard gate.admits(rms: scratch.withUnsafeBufferPointer(SilenceGate.rms)) else { continue }
-            if let packet = try? scratch.withUnsafeMutableBufferPointer({ try encoder.encode($0) }), !packet.isEmpty {
-                onFrame(packet)
+            guard gate.admits(rms: scratch.withUnsafeBufferPointer(SilenceGate.rms)) else {
+                flushWide()
+                continue
             }
+            if let packet = try? scratch.withUnsafeMutableBufferPointer({ try encoder.encode($0) }), !packet.isEmpty {
+                onFrame(VoiceFrame(data: packet, durationMs: Opus.frameMs))
+            }
+            wideScratch.append(contentsOf: scratch)
+            if wideScratch.count >= Opus.internetFrameSamples { flushWide() }
+        }
+    }
+
+    /// Emits the pending 20 ms packet, padding a lone 10 ms half with silence so the gate closing on a
+    /// word tail does not strand it until the next word.
+    private func flushWide() {
+        guard !wideScratch.isEmpty, let wideEncoder else { return }
+        wideScratch.append(
+            contentsOf: repeatElement(0, count: Opus.internetFrameSamples - wideScratch.count))
+        let packet = try? wideScratch.withUnsafeMutableBufferPointer { try wideEncoder.encode($0) }
+        wideScratch.removeAll(keepingCapacity: true)
+        if let packet, !packet.isEmpty {
+            onFrame(VoiceFrame(data: packet, durationMs: Opus.internetFrameMs))
         }
     }
 
