@@ -162,7 +162,7 @@ final class BLETransport: NSObject, Transport, @unchecked Sendable {
             channel.outputStream.close()
             return
         }
-        let io = ChannelIO(input: channel.inputStream, output: channel.outputStream) { [weak self] event in
+        let io = ChannelIO(channel: channel, input: channel.inputStream, output: channel.outputStream) { [weak self] event in
             guard let self else { return }
             queue.async { self.handle(event, for: link) }
         }

@@ -3,6 +3,9 @@ import Foundation
 /// Length-prefixed framing over an L2CAP channel's stream pair. Owned entirely by the
 /// "nearby.ble" run loop thread; BLETransport's queue reaches it only through `onChannelThread`.
 final class ChannelIO: NSObject, StreamDelegate {
+    /// The streams do not retain the channel; if it deallocates, CoreBluetooth tears the L2CAP link down.
+    private let channel: AnyObject
+
     enum Event {
         case up
         case down
@@ -16,7 +19,8 @@ final class ChannelIO: NSObject, StreamDelegate {
     private var outBuffer = Data()
     private var closed = false
 
-    init(input: InputStream, output: OutputStream, handler: @escaping (Event) -> Void) {
+    init(channel: AnyObject, input: InputStream, output: OutputStream, handler: @escaping (Event) -> Void) {
+        self.channel = channel
         self.input = input
         self.output = output
         self.handler = handler
