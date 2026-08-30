@@ -2,6 +2,17 @@
   "name": "nearby-web",
   "private": true,
   "type": "module",
-  "scripts": { "dev": "wrangler dev", "deploy": "wrangler deploy", "check": "tsc --noEmit", "test:apple": "node test/apple.mjs", "test": "node test/apple.mjs && node test/pair.mjs" },
-  "devDependencies": { "wrangler": "^4", "@cloudflare/workers-types": "^5", "typescript": "^5" }
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "check": "tsc --noEmit",
+    "test:apple": "node test/apple.mjs",
+    "test:attest": "node test/attest.mjs",
+    "test": "node test/apple.mjs && node test/attest.mjs && node test/pair.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "^4",
+    "@cloudflare/workers-types": "^5",
+    "typescript": "^5"
+  }
 }

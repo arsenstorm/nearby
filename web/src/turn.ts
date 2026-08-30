@@ -28,10 +28,11 @@ export async function mintTurnCredentials(
   } catch {
     return null;
   }
-  // The response lists several ICE servers; only the TURN entry carries credentials.
+  // Documented shape is a list (STUN entry, then the TURN entry with credentials); a bare object is
+  // tolerated in case the API ever collapses it.
   type IceServer = { urls?: unknown; username?: unknown; credential?: unknown };
-  const servers = (body as { iceServers?: IceServer[] })?.iceServers;
-  const ice = Array.isArray(servers) ? servers.find((s) => typeof s?.username === "string") : undefined;
+  const servers = (body as { iceServers?: IceServer | IceServer[] })?.iceServers;
+  const ice = (Array.isArray(servers) ? servers : [servers]).find((s) => typeof s?.username === "string");
   const username = ice?.username;
   const credential = ice?.credential;
   if (typeof username !== "string" || typeof credential !== "string") return null;

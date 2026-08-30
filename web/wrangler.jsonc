@@ -14,7 +14,29 @@
   // TURN_KEY_ID and TURN_API_TOKEN are secrets (`npx wrangler secret put TURN_KEY_ID`, likewise for
   // TURN_API_TOKEN), created at the Cloudflare dashboard under Realtime -> TURN keys. TURN_API_BASE
   // is only overridden by tests, against a fake local server.
-  "vars": { "APPLE_BUNDLE_ID": "com.arsenstorm.nearby", "APPLE_PRODUCT_ID": "com.arsenstorm.nearby.plus.monthly" },
+  // APP_ATTEST_ROOT is the base64 of certs/AppleAppAttestationRootCA.cer (DER), set the same way as
+  // APPLE_ROOT_CA_G3: `base64 -i certs/AppleAppAttestationRootCA.cer | tr -d '\n' |
+  // npx wrangler secret put APP_ATTEST_ROOT`. Source (PEM, converted with `openssl x509 -outform DER`):
+  // https://www.apple.com/certificateauthority/Apple_App_Attestation_Root_CA.pem
+  // APP_ATTEST_TEST_ROOT is a test-only extra anchor and must stay unset here, like APPLE_TEST_ROOT.
+  // BUDGET_PAUSED_OVERRIDE is likewise test-only.
+  // APP_ATTEST_TEAM_ID (the Apple Developer team ID; the relying-party ID is "<team>.<bundle>") and
+  // CF_ANALYTICS_TOKEN (an API token with Account Analytics Read) are secrets, delivered by
+  // Infisical's Cloudflare Workers sync like TURN_API_TOKEN.
+  "vars": {
+    "APPLE_BUNDLE_ID": "com.arsenstorm.nearby",
+    "APPLE_PRODUCT_ID": "com.arsenstorm.nearby.plus.monthly",
+    "APP_ATTEST_BUNDLE_ID": "com.arsenstorm.nearby",
+    "ALLOWANCE_MINUTES": "2400",
+    "BUDGET_GB": "900",
+    "CF_ACCOUNT_ID": "8dd0864e5cce87fba700990f062744f0"
+  },
+  // Per-node relay allowance, the App Attest key registry and the budget kill switch.
+  // Create with `npx wrangler kv namespace create RELAY` (and `--preview` for the preview id), then
+  // paste the ids here — the placeholders below only work for `wrangler dev --local`.
+  "kv_namespaces": [{ "binding": "RELAY", "id": "5609037babe44cd9a8ad918851bee785", "preview_id": "relay-local" }],
+  // Hourly budget refresh; see scheduled() in src/index.ts.
+  "triggers": { "crons": ["0 * * * *"] },
   "durable_objects": { "bindings": [{ "name": "PAIR", "class_name": "PairRoom" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["PairRoom"] }],
   "ratelimits": [{ "name": "PAIR_RL", "namespace_id": "1001", "simple": { "limit": 30, "period": 60 } }]
