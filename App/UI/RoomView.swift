@@ -32,6 +32,14 @@ struct RoomView: View {
                                     Text(member.id == node.nodeID ? "You" : member.name)
                                         .lineLimit(1)
                                         .layoutPriority(1)
+                                    if let route = routeLabel(for: member) {
+                                        Text(route)
+                                            .font(.caption2.weight(.medium))
+                                            .foregroundStyle(.secondary)
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
+                                            .background(.quaternary, in: Capsule())
+                                    }
                                     Leader()
                                         .stroke(style: StrokeStyle(lineWidth: 1.5, lineCap: .round, dash: [0.1, 5]))
                                         .foregroundStyle(.quaternary)
@@ -108,6 +116,14 @@ struct RoomView: View {
         q -= min(path.lossFraction * 3, 0.5)
         q -= max(path.latencyMs - 100, 0) / 400
         return max(q, 0.25)
+    }
+
+    /// Only internet links are labelled: a local link is neither, and PRD R5 wants relayed edges named.
+    private func routeLabel(for member: Member) -> String? {
+        guard member.id != node.nodeID, let link = node.pathInfo[member.id]?.nextLink,
+              link.transport == .internet
+        else { return nil }
+        return link.endpoint.hasPrefix("relay:") ? "Relayed" : "Direct"
     }
 
     private func qualityColor(_ q: Double) -> Color {

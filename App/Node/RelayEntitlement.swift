@@ -19,6 +19,10 @@ enum RelayEntitlement: Equatable, Sendable {
         await cache.current()
     }
 
+    static func reload() async -> Proof {
+        await cache.reload()
+    }
+
     private actor Cache {
         private var proof: Proof? = Cache.stored()
         private var refreshing = false
@@ -31,6 +35,13 @@ enum RelayEntitlement: Equatable, Sendable {
             proof = await fetch()
             store(proof!)
             return proof!
+        }
+
+        func reload() async -> Proof {
+            let fresh = await fetch()
+            proof = fresh
+            store(fresh)
+            return fresh
         }
 
         private func refresh() {

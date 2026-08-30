@@ -43,6 +43,12 @@ struct PathInfo: Equatable, Sendable {
     var jitterMs: Double
 }
 
+/// A relayed edge is the only way to `peer` and this device holds no entitlement (PRD R5).
+struct PaywallPrompt: Identifiable, Equatable, Sendable {
+    let peer: NodeID
+    var id: NodeID { peer }
+}
+
 struct PacketCounters: Equatable, Sendable {
     var sent = 0
     var received = 0

@@ -8,6 +8,7 @@ struct RootView: View {
     private var inRoom: Bool { node.hosted != nil || node.joined != nil }
 
     var body: some View {
+        @Bindable var node = node
         NavigationStack {
             VStack(spacing: 0) {
                 header
@@ -36,6 +37,7 @@ struct RootView: View {
                 NavigationLink { SettingsView() } label: { Image(systemName: "gearshape") }
             }
             .sheet(isPresented: $showHelp) { HelpSheet() }
+            .sheet(item: $node.paywall) { PaywallView(prompt: $0) }
             .alert(
                 node.keyWarning.map { "\($0.hello.name) has a new key" } ?? "",
                 // Dismissal is driven by the buttons; the setter must not clear the warning twice.

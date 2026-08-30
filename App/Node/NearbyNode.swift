@@ -36,6 +36,8 @@ final class NearbyNode {
     var packetCounters = PacketCounters()
     var multipathLossThreshold: Double = 0.05
     var relayEntitlement: RelayEntitlement = .freeDirectOnly
+    var paywall: PaywallPrompt?
+    private var paywallShown: Set<NodeID> = []
     var attestState: String = AppAttest.isSupported ? "unattested" : "no App Attest"
     var jitterTargetDepth: Int = 2 {
         didSet { audio?.jitterTargetDepth = jitterTargetDepth }
@@ -192,7 +194,8 @@ final class NearbyNode {
             attestationRejected: {
                 AppAttest.reset()
                 report("unattested")
-            })
+            },
+            relayUnavailable: { peer, _ in Task { @MainActor in current?.relayNeeded(peer) } })
     }
 
     nonisolated private static func proof(jws: String, nonce: Data) async -> InternetTransport.RelayProof? {
@@ -215,6 +218,24 @@ final class NearbyNode {
 
     private func refreshEntitlement() {
         Task { @MainActor [self] in relayEntitlement = await RelayEntitlement.current().state }
+    }
+
+    /// Shown once per peer per launch; a second refusal within the run is noise, not news.
+    func relayNeeded(_ peer: NodeID) {
+        guard relayEntitlement == .freeDirectOnly, !paywallShown.contains(peer) else { return }
+        paywallShown.insert(peer)
+        paywall = PaywallPrompt(peer: peer)
+    }
+
+    func purchased(for peer: NodeID) {
+        Task { @MainActor [self] in
+            relayEntitlement = await RelayEntitlement.reload().state
+            (transports[.internet] as? InternetTransport)?.retryRelay(peer)
+        }
+    }
+
+    func peerName(_ id: NodeID) -> String {
+        peers.first { $0.id == id }?.name ?? peerStore.record(for: id)?.name ?? id.description
     }
 
     func setTransport(_ id: TransportID, enabled: Bool) {
