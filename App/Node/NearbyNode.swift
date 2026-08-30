@@ -131,6 +131,11 @@ final class NearbyNode {
         guard started else { return }
         logger.notice("resuming transports after background")
         for (id, transport) in transports where transportStates[id]?.enabled == true {
+            // A relayed call survives the background; restarting it here is what used to drop it.
+            if let internet = transport as? InternetTransport {
+                internet.resume()
+                continue
+            }
             dropLinks(for: id)
             Task { @MainActor [self] in
                 await transport.stop()

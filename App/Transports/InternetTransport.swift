@@ -199,6 +199,19 @@ final class InternetTransport: Transport, @unchecked Sendable {
             for peer in peers { dial(peer) }
             return
         }
+        revalidate()
+    }
+
+    /// The UDP socket outlives a spell in the background, so coming back is a path change, not a
+    /// restart: links that still answer stay, the rest are rebuilt.
+    func resume() {
+        queue.async { [self] in
+            guard started else { return }
+            revalidate()
+        }
+    }
+
+    private func revalidate() {
         probeLinks()
         // An idle peer holds our old candidates; a fresh offer carries the new addresses.
         for peer in peers where !hasLink(peer) {
