@@ -16,6 +16,8 @@ final class InternetTransport: Transport, @unchecked Sendable {
     private static let keepaliveInterval: TimeInterval = 15
     private static let linkTimeout: TimeInterval = 45
     private static let retryDelay: TimeInterval = 30
+    // Every relay request spends a 10-minute grant of the node's allowance, so retries are paced.
+    private static let relayInterval: TimeInterval = 60
 
     private let continuation: AsyncStream<TransportEvent>.Continuation
     let queue = DispatchQueue(label: "nearby.transport.internet")
@@ -49,8 +51,11 @@ final class InternetTransport: Transport, @unchecked Sendable {
     var offered: Set<NodeID> = []
     var mine: [NodeID: [Candidate]] = [:]
     private var punching: [NodeID: (candidates: [Candidate], deadline: Date)] = [:]
+    /// Every address a peer has offered; kept after link-up because the peer may talk from another of them.
+    private var theirs: [NodeID: [Candidate]] = [:]
     private var links: [LinkID: Link] = [:]
     var relays: [NodeID: TURNClient] = [:]
+    private var lastRelayAttempt: [NodeID: Date] = [:]
     /// A relay asked for but not yet answered; the reply needs the candidates the punch failed on.
     var pendingRelay: [NodeID: (jws: String, candidates: [Candidate], proof: RelayProof?)] = [:]
     private var keepaliveTimer: DispatchSourceTimer?
@@ -194,6 +199,7 @@ final class InternetTransport: Transport, @unchecked Sendable {
     // MARK: - Punching
 
     func startPunch(_ peer: NodeID, candidates: [Candidate]) {
+        theirs[peer] = candidates
         let deadline = Date().addingTimeInterval(Self.punchWindow)
         punching[peer] = (candidates, deadline)
         logger.notice("punch \(peer.description, privacy: .public)")
@@ -219,6 +225,8 @@ final class InternetTransport: Transport, @unchecked Sendable {
     /// PRD R7/R9: only after the direct window fails do we pay for a TURN allocation.
     private func startRelay(_ peer: NodeID, candidates: [Candidate]) {
         guard started, relays[peer] == nil, pendingRelay[peer] == nil, !hasLink(peer) else { return }
+        guard Date().timeIntervalSince(lastRelayAttempt[peer] ?? .distantPast) >= Self.relayInterval else { return }
+        lastRelayAttempt[peer] = Date()
         Task { [weak self, entitlement] in
             guard let jws = await entitlement() else { return }
             self?.queue.async { [weak self] in self?.requestRelay(peer, jws: jws, candidates: candidates) }
@@ -242,7 +250,8 @@ final class InternetTransport: Transport, @unchecked Sendable {
 
     private func relayReady(_ peer: NodeID, relayed: (host: String, port: UInt16), candidates: [Candidate]) {
         // The relay drops anything from an address it has no permission for (RFC 8656 §9).
-        for host in Set(candidates.map(\.host)) { relays[peer]?.permit(host: host) }
+        // The relay can only reach the peer's public addresses, and Cloudflare refuses private ones outright.
+        for host in Set(candidates.map(\.host)) where Self.isPublic(host) { relays[peer]?.permit(host: host) }
         if let task = rooms[peer] {
             let relay = Candidate(kind: .relay, host: relayed.host, port: relayed.port)
             finishOffer(task, peer: peer, candidates: (mine[peer] ?? []) + [relay])
@@ -256,6 +265,17 @@ final class InternetTransport: Transport, @unchecked Sendable {
 
     private func relayed(_ link: LinkID) -> Bool { link.endpoint.hasPrefix("relay:") }
 
+    private static func isPublic(_ host: String) -> Bool {
+        if host.contains(":") { return !(host.hasPrefix("fe80") || host.hasPrefix("fd") || host.hasPrefix("fc") || host == "::1") }
+        let parts = host.split(separator: ".").compactMap { UInt8($0) }
+        guard parts.count == 4 else { return false }
+        let (a, b) = (parts[0], parts[1])
+        // RFC 1918, CGNAT 100.64/10, link-local, loopback and the 464XLAT prefix are all unreachable from a relay.
+        if a == 10 || a == 127 || (a == 169 && b == 254) || (a == 192 && b == 168) || (a == 192 && b == 0) { return false }
+        if (a == 172 && (16...31).contains(b)) || (a == 100 && (64...127).contains(b)) { return false }
+        return true
+    }
+
     private func sendRaw(_ data: Data, host: String, port: UInt16, relay: NodeID?) {
         guard let relay, let client = relays[relay] else { return socket?.send(data, to: host, port: port) ?? () }
         client.send(data, to: host, port: port)
@@ -263,8 +283,8 @@ final class InternetTransport: Transport, @unchecked Sendable {
 
     /// A symmetric NAT rewrites the source port per destination, so the peer can arrive from a port it never advertised.
     private func peerOwning(host: String, port: UInt16) -> NodeID? {
-        let exact = punching.first { $0.value.candidates.contains { $0.host == host && $0.port == port } }
-        return exact?.key ?? punching.first { $0.value.candidates.contains { $0.host == host } }?.key
+        let exact = theirs.first { $0.value.contains { $0.host == host && $0.port == port } }
+        return exact?.key ?? theirs.first { $0.value.contains { $0.host == host } }?.key
     }
 
     // MARK: - Datagrams
@@ -279,19 +299,33 @@ final class InternetTransport: Transport, @unchecked Sendable {
     private func deliver(_ data: Data, host: String, port: UInt16, relay: NodeID?) {
         let endpoint = relay == nil ? "\(host):\(port)" : "relay:\(host):\(port)"
         let link = LinkID(transport: id, endpoint: endpoint)
-        if data == Self.punch { sendRaw(Self.ack, host: host, port: port, relay: relay) }
-        guard data != Self.punch, data != Self.ack else { return receivedPunch(link, host: host, port: port) }
+        // A punch only proves the inbound direction, so it is answered but never brings a link up;
+        // the ack that comes back proves the round trip and does.
+        if data == Self.punch { return answerPunch(link, host: host, port: port, relay: relay) }
+        if data == Self.ack { return receivedAck(link, host: host, port: port) }
+        // The peer may have nominated a different address pair than we did; a datagram from any
+        // address it offered is proof enough to carry that pair as a second link.
+        if links[link] == nil, let peer = peerOwning(host: host, port: port) { bringUp(link, peer: peer, host: host, port: port) }
         guard links[link] != nil else { return }
         links[link]?.lastHeard = Date()
         continuation.yield(.received(data, link))
     }
 
-    private func receivedPunch(_ link: LinkID, host: String, port: UInt16) {
+    private func answerPunch(_ link: LinkID, host: String, port: UInt16, relay: NodeID?) {
+        sendRaw(Self.ack, host: host, port: port, relay: relay)
+        links[link]?.lastHeard = Date()
+    }
+
+    private func receivedAck(_ link: LinkID, host: String, port: UInt16) {
         guard links[link] == nil else {
             links[link]?.lastHeard = Date()
             return
         }
         guard let peer = peerOwning(host: host, port: port) else { return }
+        bringUp(link, peer: peer, host: host, port: port)
+    }
+
+    private func bringUp(_ link: LinkID, peer: NodeID, host: String, port: UInt16) {
         links[link] = Link(peer: peer, host: host, port: port, lastHeard: Date())
         punching[peer] = nil
         // PRD R9 renews TURN credentials over this same socket, so a relayed link keeps its room.
