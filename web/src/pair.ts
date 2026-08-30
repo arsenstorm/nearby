@@ -125,7 +125,10 @@ export class PairRoom extends DurableObject<Env> {
   // A relay request is always answered, never fatal: a peer that is out of allowance or fails
   // attestation keeps its socket and carries on trying to connect directly.
   private async handleRelay(ws: WebSocket, slot: Slot, relay: Relay): Promise<void> {
-    ws.send(JSON.stringify({ t: "relay", ...(await this.grantRelay(slot, relay)) }));
+    const reply = await this.grantRelay(slot, relay);
+    // Refusals are the only relay outcome worth a log line: `wrangler tail` is how they get diagnosed.
+    if (!reply.ok) console.log(`relay refused ${slot.nodeID}: ${reply.reason}`);
+    ws.send(JSON.stringify({ t: "relay", ...reply }));
   }
 
   private async grantRelay(slot: Slot, relay: Relay): Promise<Record<string, unknown>> {
@@ -158,15 +161,15 @@ export class PairRoom extends DurableObject<Env> {
     let stored = await this.env.RELAY.get<Attested>(key, "json");
     // A fresh attestation replaces the stored key: a client that lost or reset its key must be able to re-enrol.
     if (!stored || relay.attestation) {
-      if (!relay.attestation) return false;
+      if (!relay.attestation) return refuse("no attestation and no registered key");
       const keyId = base64(relay.keyId);
       const fresh = await verifyAttestation(base64(relay.attestation), unhex(slot.nonce), keyId, opts);
-      if (!fresh) return false;
+      if (!fresh) return refuse(`attestation rejected (${relay.attestation.length} chars, keyId ${relay.keyId.length} chars)`);
       stored = { spki: b64(fresh.publicKeySpki), counter: 0 };
     }
     const data = clientData(relay.entitlement, slot.nonce);
     const counter = await verifyAssertion(base64(relay.assertion), data, { ...opts, spki: base64(stored.spki), counter: stored.counter });
-    if (counter === null) return false;
+    if (counter === null) return refuse(`assertion rejected (stored counter ${stored.counter})`);
     await this.env.RELAY.put(key, JSON.stringify({ spki: stored.spki, counter } satisfies Attested));
     return true;
   }
@@ -244,4 +247,9 @@ function base64(text: string): Uint8Array {
   } catch {
     return new Uint8Array();
   }
+}
+
+function refuse(why: string): false {
+  console.log(`attest: ${why}`);
+  return false;
 }
