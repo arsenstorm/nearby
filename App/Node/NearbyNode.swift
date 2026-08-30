@@ -87,6 +87,7 @@ final class NearbyNode {
             .p2pWiFi: DatagramTransport(id: .p2pWiFi, peerToPeer: true, serviceName: serviceName),
             .ble: BLETransport(serviceName: serviceName),
             .wifiAware: WiFiAwareTransport(serviceName: serviceName),
+            .internet: InternetTransport(identity: identity),
         ]
         for id in TransportID.allCases {
             let supported = transports[id]?.isSupported ?? false
@@ -108,6 +109,7 @@ final class NearbyNode {
         for (id, transport) in transports where transportStates[id]?.enabled == true {
             startTransport(id, transport)
         }
+        syncInternetPeers()
         timers.append(every(1) { [self] in broadcastHello() })
         timers.append(every(1) { [self] in prune() })
         timers.append(every(2) { [self] in announceHostedRoom() })

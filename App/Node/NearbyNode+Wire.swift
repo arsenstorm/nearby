@@ -239,7 +239,10 @@ extension NearbyNode {
         }
         if sessions[hello.nodeID]?.remoteEphemeralPublicKey != hello.ephemeralPublicKey { makeSession(for: hello) }
         upsertPeer(id: record.id, name: record.name, lastSeen: now)
-        if before != record { PeerStoreFile.save(peerStore) }
+        if before != record {
+            PeerStoreFile.save(peerStore)
+            syncInternetPeers()
+        }
     }
 
     private func receiveControl(_ packet: Packet) {

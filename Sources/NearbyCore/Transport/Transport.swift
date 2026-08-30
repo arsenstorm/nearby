@@ -1,7 +1,7 @@
 import Foundation
 
 public enum TransportID: String, Sendable, Codable, CaseIterable {
-    case lan, p2pWiFi, ble, wifiAware
+    case lan, p2pWiFi, ble, wifiAware, internet
 }
 
 /// One transport-level path to one neighbour. A neighbour on two transports has two links.
