@@ -33,6 +33,8 @@ final class DatagramTransport: Transport, @unchecked Sendable {
         self.queue = DispatchQueue(label: "nearby.transport.\(id)")
         let params = NWParameters.udp
         params.includePeerToPeer = peerToPeer
+        // Marks the link latency-sensitive: AWDL leaves its power-save schedule (~300 ms one-way) for real-time mode.
+        params.serviceClass = .interactiveVoice
         self.params = params
         (self.events, self.continuation) = AsyncStream.makeStream(of: TransportEvent.self)
     }
