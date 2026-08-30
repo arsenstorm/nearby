@@ -59,6 +59,7 @@ final class AudioEngine: @unchecked Sendable {
         var targetDepth = 3
         var internetTargetDepth = 3
         var running = false
+        var noiseReduction = AudioEngine.storedNoiseReduction
     }
 
     private let onFrame: @Sendable (VoiceFrame) -> Void
@@ -76,12 +77,19 @@ final class AudioEngine: @unchecked Sendable {
     /// Sink (render) thread only.
     private var wideScratch: [Float] = []
     private var gate = SilenceGate()
+    /// Sink (render) thread only. The setting `gate` was last built for.
+    private var appliedReduction = AudioEngine.storedNoiseReduction
     /// Sink (render) thread only.
     private var converter: AVAudioConverter?
     /// Sink (render) thread only.
     private var converterInputFormat: AVAudioFormat?
     /// Sink (render) thread only.
     private var accumulator: [Float] = []
+    /// Sink (render) thread only. Frames the gate rejected while an onset may still be forming; the
+    /// gate opens a few frames into a word, and dropping them clips the first syllable.
+    private var held: [Float] = []
+    /// Two frames: what the 30 ms onset can reject before the gate opens.
+    private var heldCap: Int { 2 * Opus.frameSamples }
     /// Sink (render) thread only.
     private var scratch = [Float](repeating: 0, count: Opus.frameSamples)
 
@@ -114,6 +122,21 @@ final class AudioEngine: @unchecked Sendable {
         }
     }
 
+    static let noiseReductionKey = "audio.noiseReduction.enabled"
+    static var storedNoiseReduction: Bool {
+        UserDefaults.standard.object(forKey: noiseReductionKey) as? Bool ?? true
+    }
+
+    /// A stricter gate that drops clicks: +12 dB over the floor, and only after a 30 ms onset.
+    private static func gate(reducing: Bool) -> SilenceGate {
+        reducing ? SilenceGate(ratio: 4, onsetMs: 30) : SilenceGate()
+    }
+
+    var noiseReduction: Bool {
+        get { shared.withLock { $0.noiseReduction } }
+        set { shared.withLock { $0.noiseReduction = newValue } }
+    }
+
     /// Frames of 20 ms. Internet paths jitter more than local ones, so they buffer deeper.
     var internetJitterTargetDepth: Int {
         get { shared.withLock { $0.internetTargetDepth } }
@@ -143,10 +166,14 @@ final class AudioEngine: @unchecked Sendable {
 
         encoder = try OpusEncoder()
         wideEncoder = try OpusEncoder(frameMs: Opus.internetFrameMs)
+        appliedReduction = shared.withLock { $0.noiseReduction }
+        gate = Self.gate(reducing: appliedReduction)
         converter = nil
         converterInputFormat = nil
         accumulator.removeAll(keepingCapacity: true)
         wideScratch.removeAll(keepingCapacity: true)
+        held.removeAll(keepingCapacity: true)
+        held.reserveCapacity(Opus.frameSamples * 2)
 
         // A tap ignores its bufferSize on iOS and hands over ~100 ms chunks; a sink sees every IO cycle.
         let input = engine.inputNode
@@ -305,19 +332,44 @@ final class AudioEngine: @unchecked Sendable {
     }
 
     private func drainAccumulator(through encoder: OpusEncoder) {
+        // Settings can change the level mid-call; picking it up here keeps the lock off the frame loop.
+        let level = shared.withLock { $0.noiseReduction }
+        if level != appliedReduction {
+            appliedReduction = level
+            gate = Self.gate(reducing: level)
+            held.removeAll(keepingCapacity: true)
+        }
         while accumulator.count >= Opus.frameSamples {
             for i in 0..<Opus.frameSamples { scratch[i] = accumulator[i] }
             accumulator.removeFirst(Opus.frameSamples)
             guard gate.admits(rms: scratch.withUnsafeBufferPointer(SilenceGate.rms)) else {
+                if appliedReduction {
+                    held.append(contentsOf: scratch)
+                    while held.count > heldCap { held.removeFirst(Opus.frameSamples) }
+                }
                 flushWide()
                 continue
             }
-            if let packet = try? scratch.withUnsafeMutableBufferPointer({ try encoder.encode($0) }), !packet.isEmpty {
-                onFrame(VoiceFrame(data: packet, durationMs: Opus.frameMs))
+            // The frames that opened the gate are the start of the word; send them before it.
+            if gate.justOpened {
+                held.withUnsafeMutableBufferPointer { buffer in
+                    for start in stride(from: 0, to: buffer.count, by: Opus.frameSamples) {
+                        emit(.init(rebasing: buffer[start..<start + Opus.frameSamples]), through: encoder)
+                    }
+                }
             }
-            wideScratch.append(contentsOf: scratch)
-            if wideScratch.count >= Opus.internetFrameSamples { flushWide() }
+            held.removeAll(keepingCapacity: true)
+            scratch.withUnsafeMutableBufferPointer { emit($0, through: encoder) }
         }
+    }
+
+    /// Encodes one 10 ms frame and feeds the pending 20 ms packet. Sink (render) thread only.
+    private func emit(_ frame: UnsafeMutableBufferPointer<Float>, through encoder: OpusEncoder) {
+        if let packet = try? encoder.encode(frame), !packet.isEmpty {
+            onFrame(VoiceFrame(data: packet, durationMs: Opus.frameMs))
+        }
+        wideScratch.append(contentsOf: frame)
+        if wideScratch.count >= Opus.internetFrameSamples { flushWide() }
     }
 
     /// Emits the pending 20 ms packet, padding a lone 10 ms half with silence so the gate closing on a
