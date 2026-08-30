@@ -334,6 +334,9 @@ final class InternetTransport: Transport, @unchecked Sendable {
 
     private func sendRaw(_ data: Data, host: String, port: UInt16, via client: TURNClient?) {
         guard let client else { return socket?.send(data, to: host, port: port) ?? () }
+        // The relay reaches only public peers of its own address family; anything else is a refused
+        // ChannelBind and a Send indication into the void.
+        guard Self.isPublic(host), host.contains(":") == (client.relayedAddress?.host.contains(":") ?? false) else { return }
         client.send(data, to: host, port: port)
     }
 
