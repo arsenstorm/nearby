@@ -1,6 +1,6 @@
 import Foundation
 
-enum CandidateKind: String, Codable { case v6, host, srflx }
+enum CandidateKind: String, Codable { case v6, host, srflx, relay }
 
 struct Candidate: Codable, Hashable {
     let kind: CandidateKind
@@ -128,7 +128,7 @@ final class NATProbe: @unchecked Sendable {
     // MARK: - STUN
 
     private func stunQuery(v6: Bool, server: (host: String, port: UInt16)) async throws -> Candidate {
-        guard let address = Self.stunAddresses(server.host).first(where: { $0.contains(":") == v6 }) else {
+        guard let address = Self.addresses(server.host).first(where: { $0.contains(":") == v6 }) else {
             throw NATProbeError.stunTimeout
         }
         let request = stunRequest()
@@ -150,7 +150,7 @@ final class NATProbe: @unchecked Sendable {
         }
     }
 
-    private static func stunAddresses(_ host: String) -> [String] {
+    static func addresses(_ host: String) -> [String] {
         var hints = addrinfo()
         hints.ai_socktype = SOCK_DGRAM
         var result: UnsafeMutablePointer<addrinfo>?
