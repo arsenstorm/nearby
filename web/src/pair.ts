@@ -1,9 +1,12 @@
 import { DurableObject } from "cloudflare:workers";
+import { verifyEntitlement } from "./apple";
 
 // One room per pair of nodes, named sha256(lo.bytes ‖ hi.bytes) of the two 8-byte NodeIDs, so a room is
 // addressable only by someone who already knows both IDs. Two authenticated slots; frames are forwarded
-// opaquely between them. The room never parses a frame after auth.
+// opaquely between them, except `{"t":"relay"}` which the room answers itself.
 const MAX_MESSAGE = 2048;
+// A relay frame carries a StoreKit JWS with its whole x5c chain inline, several KiB of base64.
+const MAX_RELAY = 16_384;
 const AUTH_DEADLINE_MS = 5_000;
 const PENDING_TTL_MS = 60_000;
 const SWEEP_MS = 5_000;
@@ -13,7 +16,15 @@ type Slot = { since: number; nonce: string; nodeID?: string; peerID?: string };
 type Pending = { at: number; message: string };
 type Auth = { t: "auth"; nodeID: string; peerID: string; signingKey: string; sig: string };
 
-export class PairRoom extends DurableObject {
+export interface Env {
+  APPLE_BUNDLE_ID: string;
+  APPLE_PRODUCT_ID: string;
+  APPLE_ROOT_CA_G3: string;
+  // Extra trust anchor for the integration test only. Never set this in production.
+  APPLE_TEST_ROOT?: string;
+}
+
+export class PairRoom extends DurableObject<Env> {
   async fetch(request: Request): Promise<Response> {
     if (request.headers.get("Upgrade") !== "websocket") return new Response("websocket only", { status: 426 });
     const { 0: client, 1: server } = new WebSocketPair();
@@ -27,10 +38,16 @@ export class PairRoom extends DurableObject {
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
     if (typeof message !== "string") return ws.close(1003, "text frames only");
-    if (message.length > MAX_MESSAGE) return ws.close(1009, "too big");
+    if (message.length > MAX_RELAY) return ws.close(1009, "too big");
     const slot = ws.deserializeAttachment() as Slot;
-    if (slot.nodeID && slot.peerID) return this.forward(slot.nodeID, slot.peerID, message);
-    return this.authenticate(ws, slot, message);
+    if (!slot.nodeID || !slot.peerID) {
+      if (message.length > MAX_MESSAGE) return ws.close(1009, "too big");
+      return this.authenticate(ws, slot, message);
+    }
+    const jws = parseRelay(message);
+    if (jws !== null) return this.handleRelay(ws, jws);
+    if (message.length > MAX_MESSAGE) return ws.close(1009, "too big");
+    return this.forward(slot.nodeID, slot.peerID, message);
   }
 
   async alarm(): Promise<void> {
@@ -84,6 +101,19 @@ export class PairRoom extends DurableObject {
     return ids.size >= 2;
   }
 
+  private async handleRelay(ws: WebSocket, jws: string): Promise<void> {
+    const roots = [this.env.APPLE_ROOT_CA_G3, this.env.APPLE_TEST_ROOT].filter((root): root is string => !!root).map(base64);
+    const entitlement = await verifyEntitlement(jws, {
+      bundleId: this.env.APPLE_BUNDLE_ID,
+      productId: this.env.APPLE_PRODUCT_ID,
+      rootCertsDer: roots,
+    });
+    const reply = entitlement
+      ? { t: "relay", ok: true, entitlement: entitlement.kind }
+      : { t: "relay", ok: false, reason: "not entitled" };
+    ws.send(JSON.stringify(reply));
+  }
+
   private async forward(from: string, to: string, message: string): Promise<void> {
     for (const ws of this.ctx.getWebSockets()) {
       const slot = ws.deserializeAttachment() as Slot;
@@ -110,6 +140,20 @@ function parseAuth(message: string): Auth | null {
     typeof auth.signingKey === "string" &&
     typeof auth.sig === "string";
   return ok ? (auth as Auth) : null;
+}
+
+// Returns the carried JWS for a relay frame (empty when malformed), or null for anything else,
+// which stays opaque and gets forwarded.
+function parseRelay(message: string): string | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(message);
+  } catch {
+    return null;
+  }
+  const frame = value as { t?: unknown; entitlement?: unknown };
+  if (frame?.t !== "relay") return null;
+  return typeof frame.entitlement === "string" ? frame.entitlement : "";
 }
 
 function hex(bytes: Uint8Array): string {

@@ -5,12 +5,14 @@ import assert from "node:assert/strict";
 import { generateKeyPairSync, sign as edSign, createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { makeChain } from "./chain.mjs";
 
 const PORT = 8790;
 const BASE = `http://127.0.0.1:${PORT}`;
 const WS_BASE = `ws://127.0.0.1:${PORT}`;
 const WEB_DIR = fileURLToPath(new URL("..", import.meta.url));
 const DOMAIN = "nearby-pair-v1";
+const BUNDLE_ID = "com.arsenstorm.nearby";
 
 // ---- crypto / protocol helpers ----
 
@@ -132,7 +134,12 @@ function attemptClose(keys, myID, peerID, room, { signWith = keys, timeoutMs = 1
 // ---- test run ----
 
 async function main() {
-  proc = spawn("npx", ["wrangler", "dev", "--port", String(PORT), "--local"], {
+  // The room trusts APPLE_TEST_ROOT on top of the pinned Apple root, so the throwaway chain
+  // below verifies in the Worker. That var is never set in production (see wrangler.jsonc).
+  const chain = makeChain();
+  const testRoot = chain.rootDer.toString("base64");
+  const args = ["wrangler", "dev", "--port", String(PORT), "--local", "--var", `APPLE_TEST_ROOT:${testRoot}`];
+  proc = spawn("npx", args, {
     cwd: WEB_DIR,
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -210,6 +217,21 @@ async function main() {
     assert.equal(code, 1009);
   }
   console.log("f. oversize frame closes 1009: pass");
+
+  // g. Relay frames are answered to the sender and never forwarded to the peer.
+  wsA = await connect(A, idA, idB, roomAB);
+  {
+    const jws = chain.jws({ bundleId: BUNDLE_ID, receiptType: "Sandbox" });
+    wsA.send(JSON.stringify({ t: "relay", entitlement: jws }));
+    assert.deepEqual(JSON.parse(await nextMessage(wsA)), { t: "relay", ok: true, entitlement: "beta" });
+    wsA.send(JSON.stringify({ t: "relay", entitlement: "garbage" }));
+    assert.deepEqual(JSON.parse(await nextMessage(wsA)), { t: "relay", ok: false, reason: "not entitled" });
+    // Whatever B sees next must be this frame, so neither relay frame reached it.
+    const after = JSON.stringify({ t: "hello", after: "relay" });
+    wsA.send(after);
+    assert.equal(await nextMessage(wsB), after);
+  }
+  console.log("g. relay answered locally, not forwarded: pass");
 
   console.log("all cases passed");
 }
