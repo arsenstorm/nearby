@@ -19,34 +19,42 @@ export interface AppleVerifyOptions {
 
 const BETA_TTL_MS = 24 * 60 * 60 * 1000;
 
+// `jws` is the transaction JWS, or `<transaction>,<renewalInfo>` when the subscription has lapsed
+// into a billing grace period: the renewal info is what carries the grace end, and joining the two
+// keeps it inside the App Attest client data the app signs over.
 export async function verifyEntitlement(jws: string, opts: AppleVerifyOptions): Promise<Entitlement | null> {
   const now = opts.now ?? Date.now();
   try {
-    const parts = jws.split(".");
-    if (parts.length !== 3) return null;
-    const header = JSON.parse(text(base64url(parts[0]))) as { alg?: unknown; x5c?: unknown };
-    if (header.alg !== "ES256" || !Array.isArray(header.x5c) || header.x5c.length < 2) return null;
-    const chain = header.x5c.map((cert: string) => parseCertificate(base64(cert)));
-    if (!(await verifyChain(chain, opts.rootCertsDer, now))) return null;
-    const key = await importKey(chain[0]);
-    const signed = new TextEncoder().encode(`${parts[0]}.${parts[1]}`);
-    // JOSE signatures are already raw r‖s, unlike the DER ones inside the certificates.
-    if (!(await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, key, base64url(parts[2]), signed))) return null;
-    return entitlementOf(JSON.parse(text(base64url(parts[1]))), opts, now);
+    const [transactionJws, renewalJws] = jws.split(",");
+    const payload = await verifiedPayload(transactionJws, opts, now);
+    if (!payload) return null;
+    const entitlement = entitlementOf(payload, opts, now);
+    if (entitlement || !renewalJws) return entitlement;
+    const renewal = await verifiedPayload(renewalJws, opts, now);
+    return renewal ? graceOf(payload, renewal, opts, now) : null;
   } catch {
     return null;
   }
 }
 
+async function verifiedPayload(jws: string, opts: AppleVerifyOptions, now: number): Promise<Record<string, unknown> | null> {
+  const parts = jws.split(".");
+  if (parts.length !== 3) return null;
+  const header = JSON.parse(text(base64url(parts[0]))) as { alg?: unknown; x5c?: unknown };
+  if (header.alg !== "ES256" || !Array.isArray(header.x5c) || header.x5c.length < 2) return null;
+  const chain = header.x5c.map((cert: string) => parseCertificate(base64(cert)));
+  if (!(await verifyChain(chain, opts.rootCertsDer, now))) return null;
+  const key = await importKey(chain[0]);
+  const signed = new TextEncoder().encode(`${parts[0]}.${parts[1]}`);
+  // JOSE signatures are already raw r‖s, unlike the DER ones inside the certificates.
+  if (!(await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, key, base64url(parts[2]), signed))) return null;
+  return JSON.parse(text(base64url(parts[1])));
+}
+
 function entitlementOf(payload: Record<string, unknown>, opts: AppleVerifyOptions, now: number): Entitlement | null {
   if (payload?.bundleId !== opts.bundleId) return null;
   if (typeof payload.productId === "string") {
-    const live =
-      payload.productId === opts.productId &&
-      payload.type === "Auto-Renewable Subscription" &&
-      typeof payload.expiresDate === "number" &&
-      payload.expiresDate > now &&
-      payload.revocationDate == null;
+    const live = subscribed(payload, opts) && typeof payload.expiresDate === "number" && payload.expiresDate > now;
     return live ? { kind: "subscriber", expiresMs: payload.expiresDate as number } : null;
   }
   // An AppTransaction with a Sandbox or Xcode receipt is a TestFlight or dev build: beta access,
@@ -55,6 +63,22 @@ function entitlementOf(payload: Record<string, unknown>, opts: AppleVerifyOption
     return { kind: "beta", expiresMs: now + BETA_TTL_MS };
   }
   return null;
+}
+
+function subscribed(payload: Record<string, unknown>, opts: AppleVerifyOptions): boolean {
+  return payload.productId === opts.productId && payload.type === "Auto-Renewable Subscription" && payload.revocationDate == null;
+}
+
+// A lapsed transaction still counts while Apple retries billing (App Store Connect's grace period),
+// which only the renewal info for that same original transaction can say.
+function graceOf(transaction: Record<string, unknown>, renewal: Record<string, unknown>, opts: AppleVerifyOptions, now: number): Entitlement | null {
+  const inGrace =
+    transaction.bundleId === opts.bundleId &&
+    subscribed(transaction, opts) &&
+    renewal.originalTransactionId === transaction.originalTransactionId &&
+    typeof renewal.gracePeriodExpiresDate === "number" &&
+    renewal.gracePeriodExpiresDate > now;
+  return inGrace ? { kind: "subscriber", expiresMs: renewal.gracePeriodExpiresDate as number } : null;
 }
 
 function base64url(value: string): Uint8Array {
