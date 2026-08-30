@@ -85,6 +85,8 @@ extension InternetTransport {
         let echo = Date().timeIntervalSince(lastOfferAt[peer] ?? .distantPast) < Self.offerEcho
             && theirs[peer] == candidates
         startPunch(peer, candidates: candidates)
+        // The peer may have rebuilt; a link it no longer answers on must not stay the best route for 45 s.
+        probeLinks(to: peer)
         if !echo { answerOffer(peer) }
     }
 

@@ -17,6 +17,8 @@ final class InternetTransport: Transport, @unchecked Sendable {
     private static let keepaliveInterval: TimeInterval = 15
     private static let linkTimeout: TimeInterval = 45
     private static let retryDelay: TimeInterval = 30
+    /// How long a probed link may stay silent before it is declared dead.
+    private static let probeTimeout: TimeInterval = 3
     /// An offer that lands this soon after ours is the peer answering it, not a peer still waiting.
     static let offerEcho: TimeInterval = 2
     /// Debug switch: never punch directly, so two simulators on one Mac must go through TURN.
@@ -181,7 +183,8 @@ final class InternetTransport: Transport, @unchecked Sendable {
     }
 
     /// A TURN allocation is bound to the client's 5-tuple and a punched mapping to the old NAT, so a
-    /// Wi-Fi↔cellular switch kills both silently. What was built on the old path goes rather than time out.
+    /// Wi-Fi↔cellular switch kills both silently. But iOS also reshuffles interfaces without breaking
+    /// anything (unlock, AWDL, VPN), so a link is only rebuilt once it stops answering.
     private func pathChanged(_ path: NWPath) {
         let current = (interfaces: path.availableInterfaces.map(\.name), status: path.status)
         defer { lastPath = current }
@@ -189,8 +192,28 @@ final class InternetTransport: Transport, @unchecked Sendable {
               last.interfaces != current.interfaces || last.status != current.status
         else { return }
         logger.notice("path change: \(current.interfaces.joined(separator: ","), privacy: .public)")
-        teardown()
-        for peer in peers { dial(peer) }
+        guard path.status == .satisfied else {
+            teardown()
+            for peer in peers { dial(peer) }
+            return
+        }
+        probeLinks()
+        // An idle peer holds our old candidates; a fresh offer carries the new addresses.
+        for peer in peers where !hasLink(peer) {
+            closeRoom(peer)
+            dial(peer)
+        }
+    }
+
+    /// Punches every link (to one peer, or all) and drops those that have not answered in time.
+    func probeLinks(to peer: NodeID? = nil) {
+        let asked = Date()
+        let suspects = links.filter { peer == nil || $0.value.peer == peer }
+        for state in suspects.values { sendRaw(Self.punch, host: state.host, port: state.port, via: state.relay) }
+        queue.asyncAfter(deadline: .now() + Self.probeTimeout) { [weak self] in
+            guard let self else { return }
+            for link in suspects.keys where links[link].map({ $0.lastHeard < asked }) == true { drop(link) }
+        }
     }
 
     // MARK: - Rendezvous
@@ -383,16 +406,20 @@ final class InternetTransport: Transport, @unchecked Sendable {
     private func keepalive() {
         let now = Date()
         for (link, state) in links {
-            guard now.timeIntervalSince(state.lastHeard) <= Self.linkTimeout else {
-                links[link] = nil
-                logger.notice("link down \(link.description, privacy: .public)")
-                if state.relay != nil { dropRelay(state.peer) }
-                continuation.yield(.linkDown(link))
-                dial(state.peer)
-                continue
-            }
+            guard now.timeIntervalSince(state.lastHeard) <= Self.linkTimeout else { drop(link); continue }
             sendRaw(Self.ack, host: state.host, port: state.port, via: state.relay)
         }
+    }
+
+    private func drop(_ link: LinkID) {
+        guard let state = links.removeValue(forKey: link) else { return }
+        logger.notice("link down \(link.description, privacy: .public)")
+        if state.relay != nil { dropRelay(state.peer) }
+        continuation.yield(.linkDown(link))
+        // The room may still be open from a relayed link; only a fresh socket produces a fresh offer.
+        guard !hasLink(state.peer) else { return }
+        closeRoom(state.peer)
+        dial(state.peer)
     }
 
     func hasLink(_ peer: NodeID) -> Bool {
