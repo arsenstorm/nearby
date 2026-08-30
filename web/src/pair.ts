@@ -39,6 +39,10 @@ export interface Env extends BudgetEnv {
   // Extra App Attest trust anchor for the integration test only. Never set this in production.
   APP_ATTEST_TEST_ROOT?: string;
   ALLOWANCE_MINUTES: string;
+  // Test-deploy overrides only (`wrangler deploy --var`): mint for any authenticated slot, and a
+  // shorter credential lifetime so renewal comes round sooner.
+  RELAY_UNGATED?: string;
+  RELAY_TTL_S?: string;
   TURN_KEY_ID: string;
   TURN_API_TOKEN: string;
   // Only overridden by tests, against a fake local server.
@@ -133,6 +137,13 @@ export class PairRoom extends DurableObject<Env> {
 
   private async grantRelay(slot: Slot, relay: Relay): Promise<Record<string, unknown>> {
     if (await relayPaused(this.env)) return { ok: false, reason: "relay paused" };
+    const ttl = Number(this.env.RELAY_TTL_S) || RELAY_TTL_S;
+    // Simulators can neither attest nor hold an entitlement, so a relay test between two of them
+    // needs a manual deploy with `--var RELAY_UNGATED:1`; never set it in wrangler.jsonc.
+    if (this.env.RELAY_UNGATED === "1") {
+      const turn = await mintTurnCredentials(this.env, ttl);
+      return turn ? { ok: true, entitlement: "ungated", turn } : { ok: false, reason: "relay unavailable" };
+    }
     if (!(await this.attested(slot, relay))) return { ok: false, reason: "attestation required" };
     const roots = anchors(this.env.APPLE_ROOT_CA_G3, this.env.APPLE_TEST_ROOT);
     const entitlement = await verifyEntitlement(relay.entitlement, {
@@ -142,10 +153,10 @@ export class PairRoom extends DurableObject<Env> {
     });
     if (!entitlement) return { ok: false, reason: "not entitled" };
     const limit = Number(this.env.ALLOWANCE_MINUTES);
-    if (!(await chargeAllowance(this.env.RELAY, slot.nodeID!, RELAY_TTL_S / 60, limit))) {
+    if (!(await chargeAllowance(this.env.RELAY, slot.nodeID!, ttl / 60, limit))) {
       return { ok: false, reason: "allowance exhausted" };
     }
-    const turn = await mintTurnCredentials(this.env, RELAY_TTL_S);
+    const turn = await mintTurnCredentials(this.env, ttl);
     return turn ? { ok: true, entitlement: entitlement.kind, turn } : { ok: false, reason: "relay unavailable" };
   }
 
