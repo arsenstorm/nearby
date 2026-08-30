@@ -62,6 +62,15 @@ public struct PeerStore: Sendable {
         return record
     }
 
+    /// A scanned card is trusted as-is; the first Hello must then carry this exact signing key.
+    /// Never overwrites a record we already hold: the key we saw in person outranks a scanned one.
+    public mutating func add(_ card: PeerCard, now: Date) -> PeerRecord {
+        if let existing = records[card.nodeID] { return existing }
+        let record = PeerRecord(id: card.nodeID, signingPublicKey: card.signingPublicKey, name: card.name, firstSeen: now)
+        records[card.nodeID] = record
+        return record
+    }
+
     public func record(for id: NodeID) -> PeerRecord? {
         records[id]
     }
