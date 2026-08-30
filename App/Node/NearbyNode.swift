@@ -20,7 +20,7 @@ final class NearbyNode {
             UserDefaults.standard.set(newValue, forKey: Self.displayNameKey)
         }
     }
-    let nodeID: NodeID
+    private(set) var nodeID: NodeID
     var peers: [PeerSummary] = []
     var rooms: [RoomAnnounce] = []
     var hosted: HostRoom?
@@ -47,10 +47,11 @@ final class NearbyNode {
     static let rejoinKey = "room.rejoin"
 
     let logger = Logger(subsystem: "com.arsenstorm.nearby", category: "node")
-    let identity: Identity
+    private(set) var identity: Identity
     private var storedDisplayName: String
     var peerStore: PeerStore
-    let transports: [TransportID: any Transport]
+    var blocked: Set<NodeID>
+    private(set) var transports: [TransportID: any Transport]
     var mesh: Mesh
     var probeSequence: UInt32 = 0
     var lastAdvertisement = Date.distantPast
@@ -83,16 +84,8 @@ final class NearbyNode {
         self.storedDisplayName =
             UserDefaults.standard.string(forKey: Self.displayNameKey) ?? UIDevice.current.name
         self.peerStore = PeerStoreFile.load()
-        let serviceName = identity.nodeID.description
-        self.transports = [
-            .lan: DatagramTransport(id: .lan, peerToPeer: false, serviceName: serviceName),
-            .p2pWiFi: DatagramTransport(id: .p2pWiFi, peerToPeer: true, serviceName: serviceName),
-            .ble: BLETransport(serviceName: serviceName),
-            .wifiAware: WiFiAwareTransport(serviceName: serviceName),
-            .internet: InternetTransport(identity: identity,
-                                         entitlement: { await RelayEntitlement.current().jws },
-                                         hooks: Self.attestHooks),
-        ]
+        self.blocked = BlockListFile.load()
+        self.transports = Self.makeTransports(identity: identity, serviceName: identity.nodeID.description)
         for id in TransportID.allCases {
             let supported = transports[id]?.isSupported ?? false
             transportStates[id] = TransportState(
@@ -136,6 +129,50 @@ final class NearbyNode {
         }
         rebuildPeerLinks()
         refreshEntitlement()
+    }
+
+    /// PRD R20: a new identity, keeping `peerStore` — friends' keys are still valid, only ours changed.
+    func regenerateIdentity() {
+        Task { @MainActor [self] in
+            // Leave while links are still up so members get the leave packet instead of a timeout.
+            leaveRoom()
+            for transport in transports.values { await transport.stop() }
+            // Stale counts would otherwise survive the rebuild and double-count on reconnect.
+            for id in transportStates.keys {
+                transportStates[id]?.active = false
+                transportStates[id]?.linkCount = 0
+            }
+            identity = IdentityStore.regenerate()
+            nodeID = identity.nodeID
+            mesh = Mesh(localID: nodeID)
+            sessions = [:]
+            helloTimestamps = [:]
+            peers = []
+            pathInfo = [:]
+            voiceStats = [:]
+            AppAttest.reset()
+            // Old tasks read the old transports' `events`; drop them before startTransport can see
+            // a non-nil entry and skip creating a task for the new transport.
+            for task in eventTasks.values { task.cancel() }
+            eventTasks.removeAll()
+            transports = Self.makeTransports(identity: identity, serviceName: nodeID.description)
+            for (id, transport) in transports where transportStates[id]?.enabled == true {
+                startTransport(id, transport)
+            }
+            syncInternetPeers()
+        }
+    }
+
+    private static func makeTransports(identity: Identity, serviceName: String) -> [TransportID: any Transport] {
+        [
+            .lan: DatagramTransport(id: .lan, peerToPeer: false, serviceName: serviceName),
+            .p2pWiFi: DatagramTransport(id: .p2pWiFi, peerToPeer: true, serviceName: serviceName),
+            .ble: BLETransport(serviceName: serviceName),
+            .wifiAware: WiFiAwareTransport(serviceName: serviceName),
+            .internet: InternetTransport(identity: identity,
+                                         entitlement: { await RelayEntitlement.current().jws },
+                                         hooks: Self.attestHooks),
+        ]
     }
 
     // MARK: - App Attest
