@@ -19,6 +19,14 @@ import Testing
         #expect(buffer.pop() == .frame(Data([2])))
     }
 
+    @Test func burstDrainsBackToTargetDepth() {
+        var buffer = JitterBuffer(targetDepth: 3)
+        for i in 0..<10 { buffer.push(sequence: UInt32(i), frame: Data([UInt8(i)])) }
+        #expect(buffer.pop() == .frame(Data([7])))
+        #expect(buffer.stats.skipped == 7)
+        #expect(buffer.pop() == .frame(Data([8])))
+    }
+
     @Test func gapYieldsMissing() {
         var buffer = JitterBuffer(targetDepth: 3)
         buffer.push(sequence: 0, frame: Data([0]))

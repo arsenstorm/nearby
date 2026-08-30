@@ -1,6 +1,6 @@
 import Foundation
 
-/// 20 ms Opus frames keyed by sequence, reordered and depaced for playback.
+/// Opus frames keyed by sequence, reordered and depaced for playback.
 public struct JitterBuffer: Sendable {
     public enum Output: Sendable, Equatable {
         case frame(Data)
@@ -13,6 +13,7 @@ public struct JitterBuffer: Sendable {
         public var missing = 0
         public var late = 0
         public var reset = 0
+        public var skipped = 0
     }
 
     public var targetDepth: Int
@@ -57,7 +58,15 @@ public struct JitterBuffer: Sendable {
     }
 
     public mutating func pop() -> Output? {
-        guard !buffering, let seq = nextSequence else { return nil }
+        guard !buffering, var seq = nextSequence else { return nil }
+        // A burst after a stall leaves the buffer deep forever; skip ahead so latency comes back down.
+        if frames.count > targetDepth * 2 {
+            let keep = frames.keys.sorted().suffix(targetDepth)
+            let first = keep.first!
+            frames = frames.filter { $0.key >= first }
+            stats.skipped += Int(first - seq)
+            seq = first
+        }
         nextSequence = seq + 1
 
         if let f = frames.removeValue(forKey: seq) {
