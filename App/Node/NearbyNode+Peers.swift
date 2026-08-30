@@ -3,15 +3,15 @@ import NearbyCore
 
 /// Peer table, pairwise sessions, path info, and the periodic prune.
 extension NearbyNode {
-    func makeSession(for record: PeerRecord) {
+    func makeSession(for hello: Hello) {
         do {
-            sessions[record.id] = try PairwiseSession(
+            sessions[hello.nodeID] = try PairwiseSession(
                 identity: identity,
-                remoteID: record.id,
-                remoteAgreementPublicKey: record.agreementPublicKey
+                remoteID: hello.nodeID,
+                remoteEphemeralPublicKey: hello.ephemeralPublicKey
             )
         } catch {
-            logger.error("session for \(record.id.description, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+            logger.error("session for \(hello.nodeID.description, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -92,8 +92,8 @@ extension NearbyNode {
 
     func trustKeyChange() {
         guard let warning = keyWarning else { return }
-        if let record = try? peerStore.trust(warning.hello, now: Date()) {
-            makeSession(for: record)
+        if (try? peerStore.trust(warning.hello, now: Date())) != nil {
+            makeSession(for: warning.hello)
             PeerStoreFile.save(peerStore)
         }
         keyWarning = nil

@@ -4,21 +4,25 @@ import Foundation
 public struct PairwiseSession: Sendable {
     public let local: NodeID
     public let remote: NodeID
+    public let remoteEphemeralPublicKey: Data
 
     private let key: SymmetricKey
 
-    public init(identity: Identity, remoteID: NodeID, remoteAgreementPublicKey: Data) throws {
+    public init(identity: Identity, remoteID: NodeID, remoteEphemeralPublicKey: Data) throws {
         self.local = identity.nodeID
         self.remote = remoteID
-        let remoteKey = try Curve25519.KeyAgreement.PublicKey(rawRepresentation: remoteAgreementPublicKey)
-        let shared = try identity.agreementPrivateKey.sharedSecretFromKeyAgreement(with: remoteKey)
+        self.remoteEphemeralPublicKey = remoteEphemeralPublicKey
+        let remoteKey = try Curve25519.KeyAgreement.PublicKey(rawRepresentation: remoteEphemeralPublicKey)
+        let shared = try identity.ephemeralPrivateKey.sharedSecretFromKeyAgreement(with: remoteKey)
         let lo = min(local, remote)
         let hi = max(local, remote)
-        let salt = lo.bytes + hi.bytes
+        let localEphemeral = identity.ephemeralPublicKey
+        // Both ephemerals in the transcript so a swapped key on either side yields a different session key.
+        let ephemerals = [localEphemeral, remoteEphemeralPublicKey].sorted { $0.lexicographicallyPrecedes($1) }
         self.key = shared.hkdfDerivedSymmetricKey(
             using: SHA256.self,
-            salt: salt,
-            sharedInfo: Data("nearby-pairwise-v1".utf8),
+            salt: lo.bytes + hi.bytes,
+            sharedInfo: Data("nearby-pairwise-v2".utf8) + ephemerals[0] + ephemerals[1],
             outputByteCount: 32
         )
     }

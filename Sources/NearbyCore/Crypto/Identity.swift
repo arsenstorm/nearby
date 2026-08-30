@@ -9,7 +9,8 @@ public struct Identity: Sendable {
     public let seed: Data
 
     private let signingKey: Curve25519.Signing.PrivateKey
-    private let agreementKey: Curve25519.KeyAgreement.PrivateKey
+    // Fresh per process, never persisted: a seized identity cannot decrypt traffic from earlier launches.
+    private let ephemeralKey: Curve25519.KeyAgreement.PrivateKey
 
     public init() {
         let seed = SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }
@@ -20,19 +21,14 @@ public struct Identity: Sendable {
         guard seed.count == 32 else { throw IdentityError.badSeed }
         self.seed = seed
         self.signingKey = try Curve25519.Signing.PrivateKey(rawRepresentation: seed)
-        let agreementSeed = HKDF<SHA256>.deriveKey(
-            inputKeyMaterial: SymmetricKey(data: seed),
-            info: Data("nearby-agreement-v1".utf8),
-            outputByteCount: 32
-        ).withUnsafeBytes { Data($0) }
-        self.agreementKey = try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: agreementSeed)
+        self.ephemeralKey = Curve25519.KeyAgreement.PrivateKey()
     }
 
     public var nodeID: NodeID { NodeID(publicKey: signingPublicKey) }
 
     public var signingPublicKey: Data { signingKey.publicKey.rawRepresentation }
 
-    public var agreementPublicKey: Data { agreementKey.publicKey.rawRepresentation }
+    public var ephemeralPublicKey: Data { ephemeralKey.publicKey.rawRepresentation }
 
     public func sign(_ data: Data) throws -> Data {
         try signingKey.signature(for: data)
@@ -45,5 +41,5 @@ public struct Identity: Sendable {
         return key.isValidSignature(signature, for: data)
     }
 
-    var agreementPrivateKey: Curve25519.KeyAgreement.PrivateKey { agreementKey }
+    var ephemeralPrivateKey: Curve25519.KeyAgreement.PrivateKey { ephemeralKey }
 }
