@@ -64,15 +64,15 @@ function startTurnServer() {
         assert.equal(body, JSON.stringify({ ttl: 600 }));
         res.writeHead(200, { "Content-Type": "application/json" }).end(
           JSON.stringify({
-            iceServers: {
-              urls: [
-                "stun:stun.cloudflare.com:3478",
-                "turn:turn.cloudflare.com:3478?transport=udp",
-                "turn:turn.cloudflare.com:3478?transport=tcp",
-              ],
-              username: "u1",
-              credential: "c1",
-            },
+            // Cloudflare's documented shape: a STUN entry, then the TURN entry carrying credentials.
+            iceServers: [
+              { urls: ["stun:stun.cloudflare.com:3478"] },
+              {
+                urls: ["turn:turn.cloudflare.com:3478?transport=udp", "turn:turn.cloudflare.com:3478?transport=tcp"],
+                username: "u1",
+                credential: "c1",
+              },
+            ],
           }),
         );
       });
