@@ -49,6 +49,8 @@ final class InternetTransport: Transport, @unchecked Sendable {
     var offered: Set<NodeID> = []
     var mine: [NodeID: [Candidate]] = [:]
     private var punching: [NodeID: (candidates: [Candidate], deadline: Date)] = [:]
+    /// Every address a peer has offered; kept after link-up because the peer may talk from another of them.
+    private var theirs: [NodeID: [Candidate]] = [:]
     private var links: [LinkID: Link] = [:]
     var relays: [NodeID: TURNClient] = [:]
     /// A relay asked for but not yet answered; the reply needs the candidates the punch failed on.
@@ -194,6 +196,7 @@ final class InternetTransport: Transport, @unchecked Sendable {
     // MARK: - Punching
 
     func startPunch(_ peer: NodeID, candidates: [Candidate]) {
+        theirs[peer] = candidates
         let deadline = Date().addingTimeInterval(Self.punchWindow)
         punching[peer] = (candidates, deadline)
         logger.notice("punch \(peer.description, privacy: .public)")
@@ -263,8 +266,8 @@ final class InternetTransport: Transport, @unchecked Sendable {
 
     /// A symmetric NAT rewrites the source port per destination, so the peer can arrive from a port it never advertised.
     private func peerOwning(host: String, port: UInt16) -> NodeID? {
-        let exact = punching.first { $0.value.candidates.contains { $0.host == host && $0.port == port } }
-        return exact?.key ?? punching.first { $0.value.candidates.contains { $0.host == host } }?.key
+        let exact = theirs.first { $0.value.contains { $0.host == host && $0.port == port } }
+        return exact?.key ?? theirs.first { $0.value.contains { $0.host == host } }?.key
     }
 
     // MARK: - Datagrams
@@ -283,6 +286,9 @@ final class InternetTransport: Transport, @unchecked Sendable {
         // the ack that comes back proves the round trip and does.
         if data == Self.punch { return answerPunch(link, host: host, port: port, relay: relay) }
         if data == Self.ack { return receivedAck(link, host: host, port: port) }
+        // The peer may have nominated a different address pair than we did; a datagram from any
+        // address it offered is proof enough to carry that pair as a second link.
+        if links[link] == nil, let peer = peerOwning(host: host, port: port) { bringUp(link, peer: peer, host: host, port: port) }
         guard links[link] != nil else { return }
         links[link]?.lastHeard = Date()
         continuation.yield(.received(data, link))
@@ -299,6 +305,10 @@ final class InternetTransport: Transport, @unchecked Sendable {
             return
         }
         guard let peer = peerOwning(host: host, port: port) else { return }
+        bringUp(link, peer: peer, host: host, port: port)
+    }
+
+    private func bringUp(_ link: LinkID, peer: NodeID, host: String, port: UInt16) {
         links[link] = Link(peer: peer, host: host, port: port, lastHeard: Date())
         punching[peer] = nil
         // PRD R9 renews TURN credentials over this same socket, so a relayed link keeps its room.
