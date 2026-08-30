@@ -97,7 +97,7 @@ extension InternetTransport {
         if client == nil || relays[peer] === client { relays.removeValue(forKey: peer)?.close() }
     }
 
-    private static func isPublic(_ host: String) -> Bool {
+    static func isPublic(_ host: String) -> Bool {
         if host.contains(":") { return !(host.hasPrefix("fe80") || host.hasPrefix("fd") || host.hasPrefix("fc") || host == "::1") }
         let parts = host.split(separator: ".").compactMap { UInt8($0) }
         guard parts.count == 4 else { return false }

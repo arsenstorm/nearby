@@ -72,6 +72,7 @@ final class TURNClient: @unchecked Sendable {
     // MARK: - Allocation
 
     func allocate() {
+        logger.debug("allocating at \(self.serverAddress, privacy: .public):\(self.credentials.server.port) (\(self.credentials.server.host, privacy: .public))")
         // REQUESTED-TRANSPORT carries the IANA protocol number; 17 is UDP (RFC 8656 §14.7).
         request(.allocate, signed: false) { _ in
             [.init(type: STUNAttribute.requestedTransport, value: Data([17, 0, 0, 0])),
@@ -188,6 +189,7 @@ final class TURNClient: @unchecked Sendable {
         guard var state = pending[id] else { return }
         guard state.attempt < Self.maxAttempts else {
             pending[id] = nil
+            logger.error("turn \(String(describing: state.method), privacy: .public) unanswered after \(state.attempt) sends to \(self.serverAddress, privacy: .public)")
             return fail(TURNError.unreachable)
         }
         let attributes = state.build(id)
@@ -252,7 +254,9 @@ final class TURNClient: @unchecked Sendable {
 
     /// Nothing but the relay server has this socket's address, so anything else is junk.
     private func handle(_ datagram: Data, from host: String, port: UInt16) {
-        guard host == serverAddress, port == credentials.server.port else { return }
+        guard host == serverAddress, port == credentials.server.port else {
+            return logger.debug("ignored \(datagram.count) bytes from \(host, privacy: .public):\(port), server is \(self.serverAddress, privacy: .public)")
+        }
         if let framed = ChannelData.decode(datagram) {
             guard let channel = channels.values.first(where: { $0.number == framed.channel }) else { return }
             return onData?(framed.payload, channel.host, channel.port) ?? ()
