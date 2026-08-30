@@ -137,6 +137,7 @@ extension InternetTransport {
         guard json["ok"] as? Bool == true, let credentials = Self.credentials(json["turn"]) else {
             let reason = json["reason"] as? String ?? "malformed"
             logger.error("relay refused for \(peer.description, privacy: .public): \(reason, privacy: .public)")
+            if reason == "not entitled" { hooks.relayUnavailable(peer, reason) }
             // The Worker will never accept this key again; drop it rather than retry into a loop.
             if reason == "attestation required", pending.proof != nil { hooks.attestationRejected() }
             // A refused renewal is not retried: the call runs out with the credentials it has.

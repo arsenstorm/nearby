@@ -14,9 +14,11 @@ extension InternetTransport {
         guard started, relays[peer] == nil, pendingRelay[peer] == nil, !hasLink(peer) else { return }
         guard Date().timeIntervalSince(lastRelayAttempt[peer] ?? .distantPast) >= Self.relayInterval else { return }
         lastRelayAttempt[peer] = Date()
-        Task { [weak self, entitlement] in
+        Task { [weak self, entitlement, hooks] in
             // Relay-only testing asks with no proof; only an ungated test Worker answers that.
-            guard let jws = Self.relayOnly ? "" : await entitlement() else { return }
+            guard let jws = Self.relayOnly ? "" : await entitlement() else {
+                return hooks.relayUnavailable(peer, "not entitled")
+            }
             self?.queue.async { [weak self] in self?.requestRelay(peer, jws: jws, candidates: candidates) }
         }
     }

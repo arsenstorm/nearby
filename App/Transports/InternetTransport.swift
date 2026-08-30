@@ -43,6 +43,8 @@ final class InternetTransport: Transport, @unchecked Sendable {
         var attest: @Sendable (_ jws: String, _ nonce: Data) async -> RelayProof? = { _, _ in nil }
         var attestationAccepted: @Sendable (_ keyID: String) -> Void = { _ in }
         var attestationRejected: @Sendable () -> Void = {}
+        /// A relay is the only way to this peer and this device cannot pay for one.
+        var relayUnavailable: @Sendable (_ peer: NodeID, _ reason: String) -> Void = { _, _ in }
     }
 
     private var socket: UDPSocket?
@@ -202,6 +204,15 @@ final class InternetTransport: Transport, @unchecked Sendable {
         task.resume()
         logger.notice("dial \(peer.description, privacy: .public)")
         receiveFrame(task, peer: peer)
+    }
+
+    /// After a purchase: forget the pacing and re-offer, so the punch window fails into a paid relay.
+    func retryRelay(_ peer: NodeID) {
+        queue.async { [self] in
+            lastRelayAttempt[peer] = nil
+            closeRoom(peer)
+            dial(peer)
+        }
     }
 
     private func receiveFrame(_ task: URLSessionWebSocketTask, peer: NodeID) {

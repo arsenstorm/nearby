@@ -57,6 +57,21 @@ import Testing
 }
 
 @Suite struct PeerStoreTests {
+    @Test func removeDropsRecord() {
+        let alice = Identity()
+        var store = PeerStore()
+        _ = store.add(PeerCard(identity: alice, name: "Alice"), now: .now)
+        store.remove(alice.nodeID)
+        #expect(store.record(for: alice.nodeID) == nil)
+        #expect(store.records.isEmpty)
+    }
+
+    @Test func removeUnknownIsHarmless() {
+        var store = PeerStore()
+        store.remove(Identity().nodeID)
+        #expect(store.records.isEmpty)
+    }
+
     @Test func firstObserveSaves() throws {
         var store = PeerStore()
         let identity = Identity()
