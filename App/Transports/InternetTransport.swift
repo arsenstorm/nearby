@@ -19,6 +19,9 @@ final class InternetTransport: Transport, @unchecked Sendable {
     private static let retryDelay: TimeInterval = 30
     /// An offer that lands this soon after ours is the peer answering it, not a peer still waiting.
     static let offerEcho: TimeInterval = 2
+    /// Debug switch: never punch directly, so two simulators on one Mac must go through TURN.
+    static let relayOnlyKey = "internet.relayOnly"
+    static var relayOnly: Bool { UserDefaults.standard.bool(forKey: relayOnlyKey) }
 
     private let continuation: AsyncStream<TransportEvent>.Continuation
     let queue = DispatchQueue(label: "nearby.transport.internet")
@@ -259,7 +262,8 @@ final class InternetTransport: Transport, @unchecked Sendable {
             return startRelay(peer, candidates: state.candidates)
         }
         // Once a relay is allocated the punch goes through it: the direct path already had its window.
-        for candidate in state.candidates {
+        // Relay-only skips the direct path; a punch straight into the peer's relay is still relayed.
+        for candidate in state.candidates where !Self.relayOnly || candidate.kind == .relay || relays[peer] != nil {
             sendRaw(Self.punch, host: candidate.host, port: candidate.port, via: relays[peer])
         }
         queue.asyncAfter(deadline: .now() + 0.05) { [weak self] in self?.punchTick(peer, deadline: deadline) }

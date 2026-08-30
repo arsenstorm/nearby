@@ -3,6 +3,7 @@ import SwiftUI
 
 struct DebugView: View {
     @Environment(NearbyNode.self) private var node
+    @AppStorage(InternetTransport.relayOnlyKey) private var relayOnly = false
 
     var body: some View {
         @Bindable var node = node
@@ -24,6 +25,7 @@ struct DebugView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+                Toggle("internet: relay only", isOn: $relayOnly)
                 LabeledContent("Relay", value: relayLine)
                 NavigationLink("Wi-Fi Aware pairing") { WiFiAwarePairingView() }
             }
