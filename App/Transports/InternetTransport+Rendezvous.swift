@@ -63,8 +63,16 @@ extension InternetTransport {
               let encoded = try? hello.encode()
         else { return }
         mine[peer] = candidates.filter { $0.kind != .relay }
+        lastOfferAt[peer] = Date()
         send(["t": "offer", "hello": encoded.base64EncodedString(), "candidates": candidates.map(\.text)], on: task)
         logger.notice("offer sent to \(peer.description, privacy: .public), \(candidates.count) candidates")
+    }
+
+    /// What we advertise now: the gathered addresses plus the allocation the peer is reached through.
+    func offerCandidates(_ peer: NodeID) -> [Candidate] {
+        let gathered = mine[peer] ?? []
+        guard let relayed = relays[peer]?.relayedAddress else { return gathered }
+        return gathered + [Candidate(kind: .relay, host: relayed.host, port: relayed.port)]
     }
 
     func receiveOffer(_ json: [String: Any], peer: NodeID) {
@@ -74,15 +82,28 @@ extension InternetTransport {
         let candidates = ((json["candidates"] as? [String]) ?? []).compactMap(Candidate.init(text:))
         guard !candidates.isEmpty else { return }
         logger.notice("offer from \(peer.description, privacy: .public): \(candidates.map(\.text).joined(separator: " "), privacy: .public)")
+        let echo = Date().timeIntervalSince(lastOfferAt[peer] ?? .distantPast) < Self.offerEcho
+            && theirs[peer] == candidates
         startPunch(peer, candidates: candidates)
+        if !echo { answerOffer(peer) }
+    }
+
+    /// A peer that reconnects after the room's hold expires never sees the offer we already sent on our
+    /// own socket, so every offer is answered with ours — unless ours is what it was answering. An offer
+    /// with new addresses is never an echo: the peer re-dialed, and the room forwarded ours to its old socket.
+    private func answerOffer(_ peer: NodeID) {
+        guard let task = rooms[peer] else { return }
+        let candidates = offerCandidates(peer)
+        guard !candidates.isEmpty else { return }
+        finishOffer(task, peer: peer, candidates: candidates)
     }
 
     // MARK: - Relay request
 
     /// PRD R2–R5: the Worker mints credentials only for a JWS that proves a subscription or a beta build.
-    func requestRelay(_ peer: NodeID, jws: String, candidates: [Candidate]) {
-        guard started, relays[peer] == nil, pendingRelay[peer] == nil else { return }
-        pendingRelay[peer] = (jws, candidates, nil)
+    func requestRelay(_ peer: NodeID, jws: String, candidates: [Candidate], renewal: Bool = false) {
+        guard started, pendingRelay[peer] == nil, (relays[peer] != nil) == renewal else { return }
+        pendingRelay[peer] = (jws, candidates, nil, renewal)
         // Before "ok" the room reads any frame as the auth message, so a fresh socket waits for it.
         guard rooms[peer] != nil, offered.contains(peer) else { return dial(peer) }
         sendRelayFrame(peer, jws: jws)
@@ -118,10 +139,12 @@ extension InternetTransport {
             logger.error("relay refused for \(peer.description, privacy: .public): \(reason, privacy: .public)")
             // The Worker will never accept this key again; drop it rather than retry into a loop.
             if reason == "attestation required", pending.proof != nil { hooks.attestationRejected() }
+            // A refused renewal is not retried: the call runs out with the credentials it has.
             return
         }
-        if let proof = pending.proof, proof.attestation != nil { hooks.attestationAccepted(proof.keyID) }
-        beginRelay(peer, candidates: pending.candidates, credentials: credentials)
+        // Any accepted proof confirms the key, attestation or not; a renewal only ever carries an assertion.
+        if let proof = pending.proof { hooks.attestationAccepted(proof.keyID) }
+        beginRelay(peer, candidates: pending.candidates, credentials: credentials, renewal: pending.renewal)
     }
 
     private static func credentials(_ turn: Any?) -> TURNCredentials? {
@@ -134,5 +157,18 @@ extension InternetTransport {
         else { return nil }
         return TURNCredentials(server: (host, port), username: username,
                                password: credential, ttl: TimeInterval(ttl))
+    }
+
+    static func unhex(_ text: String) -> Data? {
+        guard text.count % 2 == 0 else { return nil }
+        var out = Data(capacity: text.count / 2)
+        var index = text.startIndex
+        while index < text.endIndex {
+            let next = text.index(index, offsetBy: 2)
+            guard let byte = UInt8(text[index..<next], radix: 16) else { return nil }
+            out.append(byte)
+            index = next
+        }
+        return out
     }
 }

@@ -1,5 +1,6 @@
 import Foundation
 import NearbyCore
+import Network
 import os
 
 /// UDP over the open internet. Two nodes meet in a rendezvous room named after both their IDs, trade
@@ -16,15 +17,18 @@ final class InternetTransport: Transport, @unchecked Sendable {
     private static let keepaliveInterval: TimeInterval = 15
     private static let linkTimeout: TimeInterval = 45
     private static let retryDelay: TimeInterval = 30
-    // Every relay request spends a 10-minute grant of the node's allowance, so retries are paced.
-    private static let relayInterval: TimeInterval = 60
+    /// An offer that lands this soon after ours is the peer answering it, not a peer still waiting.
+    static let offerEcho: TimeInterval = 2
+    /// Debug switch: never punch directly, so two simulators on one Mac must go through TURN.
+    static let relayOnlyKey = "internet.relayOnly"
+    static var relayOnly: Bool { UserDefaults.standard.bool(forKey: relayOnlyKey) }
 
     private let continuation: AsyncStream<TransportEvent>.Continuation
     let queue = DispatchQueue(label: "nearby.transport.internet")
     let logger = Logger(subsystem: "com.arsenstorm.nearby", category: "internet")
     let identity: Identity
     private let rendezvous: URL
-    private let entitlement: @Sendable () async -> String?
+    let entitlement: @Sendable () async -> String?
     let hooks: Hooks
 
     /// The App Attest material a relay request carries (PRD R17); nil where App Attest is unavailable.
@@ -45,19 +49,26 @@ final class InternetTransport: Transport, @unchecked Sendable {
     var probe: NATProbe?
     var started = false
     private var peers: Set<NodeID> = []
+    private var pathMonitor: NWPathMonitor?
+    /// The interfaces and status of the last update, to tell a real path change from a repeat.
+    private var lastPath: (interfaces: [String], status: NWPath.Status)?
     var rooms: [NodeID: URLSessionWebSocketTask] = [:]
     /// The challenge nonce of each open room; the App Attest assertion signs over it.
     var nonces: [NodeID: Data] = [:]
     var offered: Set<NodeID> = []
+    var lastOfferAt: [NodeID: Date] = [:]
     var mine: [NodeID: [Candidate]] = [:]
     private var punching: [NodeID: (candidates: [Candidate], deadline: Date)] = [:]
     /// Every address a peer has offered; kept after link-up because the peer may talk from another of them.
-    private var theirs: [NodeID: [Candidate]] = [:]
+    var theirs: [NodeID: [Candidate]] = [:]
     private var links: [LinkID: Link] = [:]
+    /// The allocation each peer is currently reached through.
     var relays: [NodeID: TURNClient] = [:]
-    private var lastRelayAttempt: [NodeID: Date] = [:]
+    /// The allocation a renewal replaced; it still receives until the peer stops sending through it.
+    var retiring: [NodeID: TURNClient] = [:]
+    var lastRelayAttempt: [NodeID: Date] = [:]
     /// A relay asked for but not yet answered; the reply needs the candidates the punch failed on.
-    var pendingRelay: [NodeID: (jws: String, candidates: [Candidate], proof: RelayProof?)] = [:]
+    var pendingRelay: [NodeID: (jws: String, candidates: [Candidate], proof: RelayProof?, renewal: Bool)] = [:]
     private var keepaliveTimer: DispatchSourceTimer?
 
     private struct Link {
@@ -65,6 +76,10 @@ final class InternetTransport: Transport, @unchecked Sendable {
         let host: String
         let port: UInt16
         var lastHeard: Date
+        /// The allocation this link's datagrams ride; nil when the path is direct.
+        var relay: TURNClient?
+        /// True on either end of a relayed path: ours, or one the peer allocated and we send straight into.
+        let relayed: Bool
     }
 
     init(identity: Identity, rendezvous: URL = URL(string: "wss://nearby.arsenstorm.com/pair/")!,
@@ -97,7 +112,10 @@ final class InternetTransport: Transport, @unchecked Sendable {
                     self.socket = socket
                     self.probe = NATProbe(socket: socket)
                     started = true
+                    // Pacing against a grant the last run paid for would blank the first minute here.
+                    lastRelayAttempt.removeAll()
                     startKeepalive()
+                    startPathMonitor()
                     for peer in peers { dial(peer) }
                     cont.resume()
                 } catch {
@@ -113,16 +131,10 @@ final class InternetTransport: Transport, @unchecked Sendable {
                 started = false
                 keepaliveTimer?.cancel()
                 keepaliveTimer = nil
-                for (_, task) in rooms { task.cancel() }
-                rooms.removeAll()
-                nonces.removeAll()
-                offered.removeAll()
-                punching.removeAll()
-                pendingRelay.removeAll()
-                for relay in relays.values { relay.close() }
-                relays.removeAll()
-                for link in links.keys { continuation.yield(.linkDown(link)) }
-                links.removeAll()
+                pathMonitor?.cancel()
+                pathMonitor = nil
+                lastPath = nil
+                teardown()
                 socket?.shutdown()
                 socket = nil
                 probe = nil
@@ -131,22 +143,59 @@ final class InternetTransport: Transport, @unchecked Sendable {
         }
     }
 
+    /// Everything tied to the current network path: allocations, links, rooms, and the relay pacing.
+    private func teardown() {
+        for client in relays.values { client.close() }
+        for client in retiring.values { client.close() }
+        relays.removeAll()
+        retiring.removeAll()
+        for peer in Array(rooms.keys) { closeRoom(peer) }
+        punching.removeAll()
+        pendingRelay.removeAll()
+        lastRelayAttempt.removeAll()
+        for link in links.keys { continuation.yield(.linkDown(link)) }
+        links.removeAll()
+    }
+
     func send(_ data: Data, over link: LinkID) async throws {
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
             queue.async { [self] in
                 guard let state = links[link] else {
                     return cont.resume(throwing: TransportError.unknownLink(link))
                 }
-                sendRaw(data, host: state.host, port: state.port, relay: relayed(link) ? state.peer : nil)
+                sendRaw(data, host: state.host, port: state.port, via: state.relay)
                 cont.resume()
             }
         }
     }
 
+    // MARK: - Path
+
+    private func startPathMonitor() {
+        let monitor = NWPathMonitor()
+        monitor.pathUpdateHandler = { [weak self] path in self?.pathChanged(path) }
+        monitor.start(queue: queue)
+        pathMonitor = monitor
+    }
+
+    /// A TURN allocation is bound to the client's 5-tuple and a punched mapping to the old NAT, so a
+    /// Wi-Fi↔cellular switch kills both silently. What was built on the old path goes rather than time out.
+    private func pathChanged(_ path: NWPath) {
+        let current = (interfaces: path.availableInterfaces.map(\.name), status: path.status)
+        defer { lastPath = current }
+        guard let last = lastPath,
+              last.interfaces != current.interfaces || last.status != current.status
+        else { return }
+        logger.notice("path change: \(current.interfaces.joined(separator: ","), privacy: .public)")
+        teardown()
+        for peer in peers { dial(peer) }
+    }
+
     // MARK: - Rendezvous
 
     func dial(_ peer: NodeID) {
-        guard started, rooms[peer] == nil, !hasLink(peer) else { return }
+        // A relayed peer keeps its room open for the renewal, so a dropped socket has to be redialed.
+        guard started, rooms[peer] == nil, hasRelayedLink(peer) || !hasLink(peer) else { return }
         let room = PairRoom.name(identity.nodeID, peer)
         let task = URLSession.shared.webSocketTask(with: rendezvous.appendingPathComponent(room))
         rooms[peer] = task
@@ -213,71 +262,44 @@ final class InternetTransport: Transport, @unchecked Sendable {
             return startRelay(peer, candidates: state.candidates)
         }
         // Once a relay is allocated the punch goes through it: the direct path already had its window.
-        let relay = relays[peer] != nil ? peer : nil
-        for candidate in state.candidates {
-            sendRaw(Self.punch, host: candidate.host, port: candidate.port, relay: relay)
+        // Relay-only skips the direct path; a punch straight into the peer's relay is still relayed.
+        for candidate in state.candidates where !Self.relayOnly || candidate.kind == .relay || relays[peer] != nil {
+            sendRaw(Self.punch, host: candidate.host, port: candidate.port, via: relays[peer])
         }
         queue.asyncAfter(deadline: .now() + 0.05) { [weak self] in self?.punchTick(peer, deadline: deadline) }
     }
 
-    // MARK: - Relay
+    // MARK: - Relay handover
 
-    /// PRD R7/R9: only after the direct window fails do we pay for a TURN allocation.
-    private func startRelay(_ peer: NodeID, candidates: [Candidate]) {
-        guard started, relays[peer] == nil, pendingRelay[peer] == nil, !hasLink(peer) else { return }
-        guard Date().timeIntervalSince(lastRelayAttempt[peer] ?? .distantPast) >= Self.relayInterval else { return }
-        lastRelayAttempt[peer] = Date()
-        Task { [weak self, entitlement] in
-            guard let jws = await entitlement() else { return }
-            self?.queue.async { [weak self] in self?.requestRelay(peer, jws: jws, candidates: candidates) }
+    /// A renewed allocation proves itself the moment the peer's traffic arrives through it, so the link
+    /// moves across without ever going down.
+    private func adopt(_ client: TURNClient?, for link: LinkID) {
+        guard let client, let state = links[link], state.relay !== client, relays[state.peer] === client
+        else { return }
+        links[link]?.relay = client
+        logger.notice("relay renewed for \(state.peer.description, privacy: .public)")
+        retire(state.peer)
+    }
+
+    /// The peer keeps sending through the replaced allocation until its own link to it times out, so
+    /// that allocation outlives the handover by exactly that window instead of closing straight away.
+    private func retire(_ peer: NodeID) {
+        guard let old = retiring[peer] else { return }
+        queue.asyncAfter(deadline: .now() + Self.linkTimeout + Self.keepaliveInterval) { [weak self, weak old] in
+            guard let self, let old, retiring[peer] === old else { return }
+            retiring.removeValue(forKey: peer)?.close()
+            logger.notice("relay retired for \(peer.description, privacy: .public)")
         }
     }
 
-    func beginRelay(_ peer: NodeID, candidates: [Candidate], credentials: TURNCredentials) {
-        guard started, relays[peer] == nil, let socket else { return }
-        let client = TURNClient(credentials: credentials,
-                                send: { [weak socket] data, host, port in socket?.send(data, to: host, port: port) },
-                                queue: queue)
-        client.onRelayed = { [weak self] relayed in self?.relayReady(peer, relayed: relayed, candidates: candidates) }
-        client.onData = { [weak self] payload, host, port in
-            self?.deliver(payload, host: host, port: port, relay: peer)
-        }
-        client.onFailure = { [weak self] _ in self?.dropRelay(peer) }
-        relays[peer] = client
-        client.allocate()
-        logger.notice("relay allocating for \(peer.description, privacy: .public)")
+    /// The peer's addresses, but only while a relayed link to it is up: nothing else is worth renewing for.
+    func relayedPeerCandidates(_ peer: NodeID) -> [Candidate]? {
+        guard links.values.contains(where: { $0.peer == peer && $0.relay != nil }) else { return nil }
+        return theirs[peer]
     }
 
-    private func relayReady(_ peer: NodeID, relayed: (host: String, port: UInt16), candidates: [Candidate]) {
-        // The relay drops anything from an address it has no permission for (RFC 8656 §9).
-        // The relay can only reach the peer's public addresses, and Cloudflare refuses private ones outright.
-        for host in Set(candidates.map(\.host)) where Self.isPublic(host) { relays[peer]?.permit(host: host) }
-        if let task = rooms[peer] {
-            let relay = Candidate(kind: .relay, host: relayed.host, port: relayed.port)
-            finishOffer(task, peer: peer, candidates: (mine[peer] ?? []) + [relay])
-        }
-        startPunch(peer, candidates: candidates)
-    }
-
-    private func dropRelay(_ peer: NodeID) {
-        relays.removeValue(forKey: peer)?.close()
-    }
-
-    private func relayed(_ link: LinkID) -> Bool { link.endpoint.hasPrefix("relay:") }
-
-    private static func isPublic(_ host: String) -> Bool {
-        if host.contains(":") { return !(host.hasPrefix("fe80") || host.hasPrefix("fd") || host.hasPrefix("fc") || host == "::1") }
-        let parts = host.split(separator: ".").compactMap { UInt8($0) }
-        guard parts.count == 4 else { return false }
-        let (a, b) = (parts[0], parts[1])
-        // RFC 1918, CGNAT 100.64/10, link-local, loopback and the 464XLAT prefix are all unreachable from a relay.
-        if a == 10 || a == 127 || (a == 169 && b == 254) || (a == 192 && b == 168) || (a == 192 && b == 0) { return false }
-        if (a == 172 && (16...31).contains(b)) || (a == 100 && (64...127).contains(b)) { return false }
-        return true
-    }
-
-    private func sendRaw(_ data: Data, host: String, port: UInt16, relay: NodeID?) {
-        guard let relay, let client = relays[relay] else { return socket?.send(data, to: host, port: port) ?? () }
+    private func sendRaw(_ data: Data, host: String, port: UInt16, via client: TURNClient?) {
+        guard let client else { return socket?.send(data, to: host, port: port) ?? () }
         client.send(data, to: host, port: port)
     }
 
@@ -291,47 +313,50 @@ final class InternetTransport: Transport, @unchecked Sendable {
 
     private func received(_ data: Data, _ host: String, _ port: UInt16) {
         if probe?.handleDatagram(data) == true { return }
-        for client in relays.values where client.handle(data, from: host, port: port) { return }
-        deliver(data, host: host, port: port, relay: nil)
+        deliver(data, host: host, port: port, via: nil)
     }
 
-    /// `relay` names the peer whose allocation carried this datagram; PRD R14 reads it back off the endpoint.
-    private func deliver(_ data: Data, host: String, port: UInt16, relay: NodeID?) {
-        let endpoint = relay == nil ? "\(host):\(port)" : "relay:\(host):\(port)"
-        let link = LinkID(transport: id, endpoint: endpoint)
+    /// `client` is the allocation that carried this datagram; PRD R14 reads it back off the endpoint.
+    func deliver(_ data: Data, host: String, port: UInt16, via client: TURNClient?) {
+        let relayed = client != nil || isPeerRelay(host: host, port: port)
+        let link = LinkID(transport: id, endpoint: relayed ? "relay:\(host):\(port)" : "\(host):\(port)")
+        adopt(client, for: link)
         // A punch only proves the inbound direction, so it is answered but never brings a link up;
         // the ack that comes back proves the round trip and does.
-        if data == Self.punch { return answerPunch(link, host: host, port: port, relay: relay) }
-        if data == Self.ack { return receivedAck(link, host: host, port: port) }
+        if data == Self.punch { return answerPunch(link, host: host, port: port, via: client) }
+        if data == Self.ack { return receivedAck(link, host: host, port: port, via: client) }
         // The peer may have nominated a different address pair than we did; a datagram from any
         // address it offered is proof enough to carry that pair as a second link.
-        if links[link] == nil, let peer = peerOwning(host: host, port: port) { bringUp(link, peer: peer, host: host, port: port) }
+        if links[link] == nil, let peer = peerOwning(host: host, port: port) {
+            bringUp(link, peer: peer, host: host, port: port, via: client)
+        }
         guard links[link] != nil else { return }
         links[link]?.lastHeard = Date()
         continuation.yield(.received(data, link))
     }
 
-    private func answerPunch(_ link: LinkID, host: String, port: UInt16, relay: NodeID?) {
-        sendRaw(Self.ack, host: host, port: port, relay: relay)
+    private func answerPunch(_ link: LinkID, host: String, port: UInt16, via client: TURNClient?) {
+        sendRaw(Self.ack, host: host, port: port, via: client)
         links[link]?.lastHeard = Date()
     }
 
-    private func receivedAck(_ link: LinkID, host: String, port: UInt16) {
+    private func receivedAck(_ link: LinkID, host: String, port: UInt16, via client: TURNClient?) {
         guard links[link] == nil else {
             links[link]?.lastHeard = Date()
             return
         }
         guard let peer = peerOwning(host: host, port: port) else { return }
-        bringUp(link, peer: peer, host: host, port: port)
+        bringUp(link, peer: peer, host: host, port: port, via: client)
     }
 
-    private func bringUp(_ link: LinkID, peer: NodeID, host: String, port: UInt16) {
-        links[link] = Link(peer: peer, host: host, port: port, lastHeard: Date())
+    private func bringUp(_ link: LinkID, peer: NodeID, host: String, port: UInt16, via client: TURNClient?) {
+        let relayed = link.endpoint.hasPrefix("relay:")
+        links[link] = Link(peer: peer, host: host, port: port, lastHeard: Date(), relay: client, relayed: relayed)
         punching[peer] = nil
-        // PRD R9 renews TURN credentials over this same socket, so a relayed link keeps its room.
-        // ponytail: credentials are not renewed; a relayed call drops at the 10-min TTL. Renew by
-        // re-sending the relay frame at ttl/2 and updating TURNClient's password.
-        if relays[peer] == nil { closeRoom(peer) }
+        // PRD R9 renews TURN credentials over this same room. The renewed address reaches the other
+        // end as an offer, so the room stays open on both ends of a relayed path, not just the payer's.
+        if !relayed { closeRoom(peer) }
+        if client != nil, relays[peer] === client { retire(peer) }
         logger.notice("link up \(link.description, privacy: .public) to \(peer.description, privacy: .public)")
         continuation.yield(.linkUp(link))
     }
@@ -350,29 +375,25 @@ final class InternetTransport: Transport, @unchecked Sendable {
             guard now.timeIntervalSince(state.lastHeard) <= Self.linkTimeout else {
                 links[link] = nil
                 logger.notice("link down \(link.description, privacy: .public)")
-                if relayed(link) { dropRelay(state.peer) }
+                if state.relay != nil { dropRelay(state.peer) }
                 continuation.yield(.linkDown(link))
                 dial(state.peer)
                 continue
             }
-            sendRaw(Self.ack, host: state.host, port: state.port, relay: relayed(link) ? state.peer : nil)
+            sendRaw(Self.ack, host: state.host, port: state.port, via: state.relay)
         }
     }
 
-    private func hasLink(_ peer: NodeID) -> Bool {
+    func hasLink(_ peer: NodeID) -> Bool {
         links.values.contains { $0.peer == peer }
     }
 
-    static func unhex(_ text: String) -> Data? {
-        guard text.count % 2 == 0 else { return nil }
-        var out = Data(capacity: text.count / 2)
-        var index = text.startIndex
-        while index < text.endIndex {
-            let next = text.index(index, offsetBy: 2)
-            guard let byte = UInt8(text[index..<next], radix: 16) else { return nil }
-            out.append(byte)
-            index = next
-        }
-        return out
+    func hasRelayedLink(_ peer: NodeID) -> Bool {
+        relays[peer] != nil || links.values.contains { $0.peer == peer && $0.relayed }
+    }
+
+    /// An address the peer offered as its TURN allocation.
+    private func isPeerRelay(host: String, port: UInt16) -> Bool {
+        theirs.values.contains { $0.contains { $0.kind == .relay && $0.host == host && $0.port == port } }
     }
 }
