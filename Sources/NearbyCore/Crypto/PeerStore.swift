@@ -71,6 +71,10 @@ public struct PeerStore: Sendable {
         return record
     }
 
+    public mutating func remove(_ id: NodeID) {
+        records[id] = nil
+    }
+
     public func record(for id: NodeID) -> PeerRecord? {
         records[id]
     }
