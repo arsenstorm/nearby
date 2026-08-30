@@ -56,19 +56,21 @@ final class AudioEngine: @unchecked Sendable {
     /// Stream table, target depth and run flag; every access takes the lock.
     private let shared = OSAllocatedUnfairLock(initialState: Shared())
 
-    /// Tap thread only.
+    /// Sink (render) thread only.
     private var encoder: OpusEncoder?
-    /// Tap thread only.
+    /// Sink (render) thread only.
     private var converter: AVAudioConverter?
-    /// Tap thread only.
+    /// Sink (render) thread only.
     private var converterInputFormat: AVAudioFormat?
-    /// Tap thread only.
+    /// Sink (render) thread only.
     private var accumulator: [Float] = []
-    /// Tap thread only.
+    /// Sink (render) thread only.
     private var scratch = [Float](repeating: 0, count: Opus.frameSamples)
 
     /// start/stop only.
     private var sourceNode: AVAudioSourceNode?
+    /// start/stop only.
+    private var sinkNode: AVAudioSinkNode?
     /// start/stop only.
     private var observers: [NSObjectProtocol] = []
 
@@ -115,11 +117,20 @@ final class AudioEngine: @unchecked Sendable {
         converterInputFormat = nil
         accumulator.removeAll(keepingCapacity: true)
 
+        // A tap ignores its bufferSize on iOS and hands over ~100 ms chunks; a sink sees every IO cycle.
         let input = engine.inputNode
-        input.installTap(onBus: 0, bufferSize: AVAudioFrameCount(Opus.frameSamples),
-                         format: input.outputFormat(forBus: 0)) { [weak self] buffer, _ in
-            self?.captured(buffer)
+        let inputFormat = input.outputFormat(forBus: 0)
+        let sink = AVAudioSinkNode { [weak self] _, frameCount, audioBufferList in
+            guard let self,
+                  let buffer = AVAudioPCMBuffer(pcmFormat: inputFormat, bufferListNoCopy: audioBufferList)
+            else { return noErr }
+            buffer.frameLength = frameCount
+            self.captured(buffer)
+            return noErr
         }
+        sinkNode = sink
+        engine.attach(sink)
+        engine.connect(input, to: sink, format: inputFormat)
 
         let source = AVAudioSourceNode(format: codecFormat) { [weak self] _, _, frameCount, audioBufferList in
             self?.render(frameCount, audioBufferList) ?? noErr
@@ -160,12 +171,10 @@ final class AudioEngine: @unchecked Sendable {
     }
 
     func stop() {
-        engine.inputNode.removeTap(onBus: 0)
         engine.stop()
-        if let sourceNode {
-            engine.detach(sourceNode)
-            self.sourceNode = nil
-        }
+        for node in [sourceNode, sinkNode].compactMap({ $0 }) { engine.detach(node) }
+        sourceNode = nil
+        sinkNode = nil
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         for token in observers { NotificationCenter.default.removeObserver(token) }
         observers.removeAll()
