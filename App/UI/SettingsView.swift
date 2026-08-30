@@ -3,7 +3,6 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(NearbyNode.self) private var node
     @State private var showHelp = false
-    @State private var showScanner = false
     @State private var confirmRegenerate = false
 
     var body: some View {
@@ -37,12 +36,6 @@ struct SettingsView: View {
                 Text("Drops keyboard clicks, taps and other short noises.")
             }
 
-            Section("Friends") {
-                NavigationLink("Friends") { FriendsView() }
-                NavigationLink("Your card") { PeerCardView() }
-                Button("Scan a card") { showScanner = true }
-            }
-
             Section {
                 Button("Regenerate identity", role: .destructive) { confirmRegenerate = true }
             } header: {
@@ -61,7 +54,6 @@ struct SettingsView: View {
             Button { showHelp = true } label: { Image(systemName: "questionmark.circle") }
         }
         .sheet(isPresented: $showHelp) { HelpSheet() }
-        .sheet(isPresented: $showScanner) { ScanCardView() }
         .confirmationDialog("Regenerate identity?", isPresented: $confirmRegenerate, titleVisibility: .visible) {
             Button("Regenerate", role: .destructive) { node.regenerateIdentity() }
         } message: {
