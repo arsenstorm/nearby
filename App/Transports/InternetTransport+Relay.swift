@@ -16,7 +16,7 @@ extension InternetTransport {
         lastRelayAttempt[peer] = Date()
         Task { [weak self, entitlement] in
             // Relay-only testing asks with no proof; only an ungated test Worker answers that.
-            guard let jws = await entitlement() ?? (Self.relayOnly ? "" : nil) else { return }
+            guard let jws = Self.relayOnly ? "" : await entitlement() else { return }
             self?.queue.async { [weak self] in self?.requestRelay(peer, jws: jws, candidates: candidates) }
         }
     }
@@ -77,8 +77,11 @@ extension InternetTransport {
         guard pendingRelay[peer] == nil, retiring[peer] == nil,
               let candidates = relayedPeerCandidates(peer)
         else { return }
-        Task { [weak self, entitlement] in
-            guard let jws = await entitlement() ?? (Self.relayOnly ? "" : nil) else { return }
+        logger.notice("relay renewing for \(peer.description, privacy: .public)")
+        Task { [weak self, entitlement, logger] in
+            let asked = Date()
+            guard let jws = Self.relayOnly ? "" : await entitlement() else { return }
+            logger.notice("entitlement took \(Int(Date().timeIntervalSince(asked) * 1000)) ms")
             self?.queue.async { [weak self] in
                 self?.requestRelay(peer, jws: jws, candidates: candidates, renewal: true)
             }
