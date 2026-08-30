@@ -4,6 +4,7 @@ import SwiftUI
 struct FriendsView: View {
     @Environment(NearbyNode.self) private var node
     @State private var forgetting: PeerRecord?
+    @State private var showScanner = false
 
     private var friends: [PeerRecord] {
         node.peerStore.records.values
@@ -17,6 +18,11 @@ struct FriendsView: View {
 
     var body: some View {
         Form {
+            Section {
+                NavigationLink("Your card") { PeerCardView() }
+                Button("Scan a card") { showScanner = true }
+            }
+
             Section("Friends") {
                 if friends.isEmpty {
                     ContentUnavailableView(
@@ -66,7 +72,8 @@ struct FriendsView: View {
             }
         }
         .navigationTitle("Friends")
-        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarTitleDisplayMode(.large)
+        .sheet(isPresented: $showScanner) { ScanCardView() }
         .confirmationDialog(
             forgetting.map { "Forget \(title(for: $0))?" } ?? "",
             // Dismissal clears the record; the setter must not fight the buttons.

@@ -8,6 +8,23 @@ struct RootView: View {
     private var inRoom: Bool { node.hosted != nil || node.joined != nil }
 
     var body: some View {
+        TabView {
+            Tab("Nearby", systemImage: "person.2.wave.2") {
+                nearbyTab
+            }
+            Tab("Friends", systemImage: "person.crop.circle") {
+                NavigationStack {
+                    FriendsView()
+                        .toolbar {
+                            NavigationLink { SettingsView() } label: { Image(systemName: "gearshape") }
+                        }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var nearbyTab: some View {
         @Bindable var node = node
         NavigationStack {
             VStack(spacing: 0) {
@@ -31,6 +48,9 @@ struct RootView: View {
                 .ignoresSafeArea()
             }
             .animation(.easeInOut(duration: 0.4), value: dotState)
+            // A call owns the bottom of the screen; the tab bar would crowd the mic and leave buttons.
+            .toolbarVisibility(inRoom ? .hidden : .visible, for: .tabBar)
+            .animation(.easeInOut(duration: 0.4), value: inRoom)
             .toolbarTitleDisplayMode(.inline)
             .toolbar {
                 Button { showHelp = true } label: { Image(systemName: "questionmark.circle") }
