@@ -82,16 +82,17 @@ extension InternetTransport {
         let candidates = ((json["candidates"] as? [String]) ?? []).compactMap(Candidate.init(text:))
         guard !candidates.isEmpty else { return }
         logger.notice("offer from \(peer.description, privacy: .public): \(candidates.map(\.text).joined(separator: " "), privacy: .public)")
+        let echo = Date().timeIntervalSince(lastOfferAt[peer] ?? .distantPast) < Self.offerEcho
+            && theirs[peer] == candidates
         startPunch(peer, candidates: candidates)
-        answerOffer(peer)
+        if !echo { answerOffer(peer) }
     }
 
     /// A peer that reconnects after the room's hold expires never sees the offer we already sent on our
-    /// own socket, so every offer is answered with ours — unless ours is what it was answering.
+    /// own socket, so every offer is answered with ours — unless ours is what it was answering. An offer
+    /// with new addresses is never an echo: the peer re-dialed, and the room forwarded ours to its old socket.
     private func answerOffer(_ peer: NodeID) {
-        guard Date().timeIntervalSince(lastOfferAt[peer] ?? .distantPast) >= Self.offerEcho,
-              let task = rooms[peer]
-        else { return }
+        guard let task = rooms[peer] else { return }
         let candidates = offerCandidates(peer)
         guard !candidates.isEmpty else { return }
         finishOffer(task, peer: peer, candidates: candidates)

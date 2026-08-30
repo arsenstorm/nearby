@@ -57,7 +57,7 @@ final class InternetTransport: Transport, @unchecked Sendable {
     var mine: [NodeID: [Candidate]] = [:]
     private var punching: [NodeID: (candidates: [Candidate], deadline: Date)] = [:]
     /// Every address a peer has offered; kept after link-up because the peer may talk from another of them.
-    private var theirs: [NodeID: [Candidate]] = [:]
+    var theirs: [NodeID: [Candidate]] = [:]
     private var links: [LinkID: Link] = [:]
     /// The allocation each peer is currently reached through.
     var relays: [NodeID: TURNClient] = [:]
