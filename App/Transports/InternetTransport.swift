@@ -333,10 +333,11 @@ final class InternetTransport: Transport, @unchecked Sendable {
     }
 
     private func sendRaw(_ data: Data, host: String, port: UInt16, via client: TURNClient?) {
-        guard let client else { return socket?.send(data, to: host, port: port) ?? () }
+        // An allocation that is still being raised carries nothing yet; until then the socket does.
+        guard let client, let relayed = client.relayedAddress else { return socket?.send(data, to: host, port: port) ?? () }
         // The relay reaches only public peers of its own address family; anything else is a refused
         // ChannelBind and a Send indication into the void.
-        guard Self.isPublic(host), host.contains(":") == (client.relayedAddress?.host.contains(":") ?? false) else { return }
+        guard Self.isPublic(host), host.contains(":") == relayed.host.contains(":") else { return }
         client.send(data, to: host, port: port)
     }
 
@@ -367,7 +368,9 @@ final class InternetTransport: Transport, @unchecked Sendable {
         if links[link] == nil, let peer = peerOwning(host: host, port: port) {
             bringUp(link, peer: peer, host: host, port: port, via: client)
         }
-        guard links[link] != nil else { return }
+        guard links[link] != nil else {
+            return logger.debug("dropped \(data.count) bytes from \(link.description, privacy: .public): no peer offered it")
+        }
         links[link]?.lastHeard = Date()
         continuation.yield(.received(data, link))
     }
@@ -382,7 +385,9 @@ final class InternetTransport: Transport, @unchecked Sendable {
             links[link]?.lastHeard = Date()
             return
         }
-        guard let peer = peerOwning(host: host, port: port) else { return }
+        guard let peer = peerOwning(host: host, port: port) else {
+            return logger.debug("ack from \(link.description, privacy: .public) matches no offered address")
+        }
         bringUp(link, peer: peer, host: host, port: port, via: client)
     }
 
