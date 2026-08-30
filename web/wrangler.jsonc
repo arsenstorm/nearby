@@ -11,6 +11,9 @@
   //   `base64 -i certs/AppleRootCA-G3.cer | tr -d '\n' | npx wrangler secret put APPLE_ROOT_CA_G3`.
   // Source: https://www.apple.com/certificateauthority/AppleRootCA-G3.cer. Put the same value in
   // .dev.vars for local dev. APPLE_TEST_ROOT is a test-only extra anchor and must stay unset here.
+  // TURN_KEY_ID and TURN_API_TOKEN are secrets (`npx wrangler secret put TURN_KEY_ID`, likewise for
+  // TURN_API_TOKEN), created at the Cloudflare dashboard under Realtime -> TURN keys. TURN_API_BASE
+  // is only overridden by tests, against a fake local server.
   "vars": { "APPLE_BUNDLE_ID": "com.arsenstorm.nearby", "APPLE_PRODUCT_ID": "com.arsenstorm.nearby.plus.monthly" },
   "durable_objects": { "bindings": [{ "name": "PAIR", "class_name": "PairRoom" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["PairRoom"] }],

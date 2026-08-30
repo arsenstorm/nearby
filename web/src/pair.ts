@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { verifyEntitlement } from "./apple";
+import { mintTurnCredentials } from "./turn";
 
 // One room per pair of nodes, named sha256(lo.bytes ‖ hi.bytes) of the two 8-byte NodeIDs, so a room is
 // addressable only by someone who already knows both IDs. Two authenticated slots; frames are forwarded
@@ -11,6 +12,8 @@ const AUTH_DEADLINE_MS = 5_000;
 const PENDING_TTL_MS = 60_000;
 const SWEEP_MS = 5_000;
 const DOMAIN = "nearby-pair-v1";
+// PRD R9: 10-minute TURN credentials, renewed by the app over this same socket.
+const RELAY_TTL_S = 600;
 
 type Slot = { since: number; nonce: string; nodeID?: string; peerID?: string };
 type Pending = { at: number; message: string };
@@ -22,6 +25,10 @@ export interface Env {
   APPLE_ROOT_CA_G3: string;
   // Extra trust anchor for the integration test only. Never set this in production.
   APPLE_TEST_ROOT?: string;
+  TURN_KEY_ID: string;
+  TURN_API_TOKEN: string;
+  // Only overridden by tests, against a fake local server.
+  TURN_API_BASE?: string;
 }
 
 export class PairRoom extends DurableObject<Env> {
@@ -108,9 +115,11 @@ export class PairRoom extends DurableObject<Env> {
       productId: this.env.APPLE_PRODUCT_ID,
       rootCertsDer: roots,
     });
-    const reply = entitlement
-      ? { t: "relay", ok: true, entitlement: entitlement.kind }
-      : { t: "relay", ok: false, reason: "not entitled" };
+    if (!entitlement) return ws.send(JSON.stringify({ t: "relay", ok: false, reason: "not entitled" }));
+    const turn = await mintTurnCredentials(this.env, RELAY_TTL_S);
+    const reply = turn
+      ? { t: "relay", ok: true, entitlement: entitlement.kind, turn }
+      : { t: "relay", ok: false, reason: "relay unavailable" };
     ws.send(JSON.stringify(reply));
   }
 
