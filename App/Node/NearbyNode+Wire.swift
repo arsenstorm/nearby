@@ -218,6 +218,7 @@ extension NearbyNode {
 
     private func receiveHello(_ payload: Data, from link: LinkID, direct: Bool) {
         guard let hello = try? Hello.decode(payload) else { return }
+        guard hello.timestampMs > helloTimestamps[hello.nodeID, default: 0] else { return }
         let now = Date()
         let before = peerStore.record(for: hello.nodeID)
         let record: PeerRecord
@@ -230,12 +231,13 @@ extension NearbyNode {
             logger.error("hello from \(hello.nodeID.description, privacy: .public) failed verification")
             return
         }
+        helloTimestamps[hello.nodeID] = hello.timestampMs
         if direct {
             let unbound = mesh.node(for: link) == nil
             mesh.bind(link, to: hello.nodeID)
             if unbound { advertiseLinkState() }
         }
-        if sessions[hello.nodeID] == nil { makeSession(for: record) }
+        if sessions[hello.nodeID]?.remoteEphemeralPublicKey != hello.ephemeralPublicKey { makeSession(for: hello) }
         upsertPeer(id: record.id, name: record.name, lastSeen: now)
         if before != record { PeerStoreFile.save(peerStore) }
     }

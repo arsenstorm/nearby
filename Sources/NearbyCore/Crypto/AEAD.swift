@@ -7,7 +7,7 @@ public enum AEADError: Error, Sendable {
 
 public enum AEAD {
     /// 12-byte nonce: source id bytes 0..<7, then stream, then sequence big-endian 4 bytes.
-    /// Reason: unique per (source, stream, sequence) under one key; the room key rotates on every membership change so a 32-bit sequence never wraps under one key.
+    /// Reason: unique per (source, stream, sequence) under one key; the room key rotates on every membership change so a 32-bit sequence never wraps under one key. Pairwise keys are per launch, so a sequence that restarts at 0 on relaunch never repeats under one key.
     public static func nonce(for header: PacketHeader) -> Data {
         var d = Data(capacity: 12)
         d.append(header.source.bytes.prefix(7))

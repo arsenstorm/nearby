@@ -54,6 +54,8 @@ final class NearbyNode {
     var lastAdvertisement = Date.distantPast
     var lastPathRefresh = Date.distantPast
     var sessions: [NodeID: PairwiseSession] = [:]
+    // Latest accepted Hello timestamp per peer. A replayed older Hello would re-derive the session from a stale ephemeral and desync it.
+    var helloTimestamps: [NodeID: UInt64] = [:]
     var roomsSeen: [RoomID: (announce: RoomAnnounce, at: Date)] = [:]
     var dedup = Dedup()
     // Seeded from the clock so a relaunch does not restart below peers' dedup windows.

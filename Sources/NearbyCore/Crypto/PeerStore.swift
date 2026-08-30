@@ -3,7 +3,6 @@ import Foundation
 public struct PeerRecord: Codable, Sendable, Equatable {
     public var id: NodeID
     public var signingPublicKey: Data
-    public var agreementPublicKey: Data
     public var name: String
     public var firstSeen: Date
 }
@@ -32,8 +31,7 @@ public struct PeerStore: Sendable {
     public mutating func observe(_ hello: Hello, now: Date) throws(PeerStoreError) -> PeerRecord {
         guard hello.verify() else { throw PeerStoreError.badSignature }
         if let existing = records[hello.nodeID] {
-            guard existing.signingPublicKey == hello.signingPublicKey,
-                  existing.agreementPublicKey == hello.agreementPublicKey else {
+            guard existing.signingPublicKey == hello.signingPublicKey else {
                 throw PeerStoreError.keyChanged(existing: existing)
             }
             var updated = existing
@@ -44,7 +42,6 @@ public struct PeerStore: Sendable {
         let record = PeerRecord(
             id: hello.nodeID,
             signingPublicKey: hello.signingPublicKey,
-            agreementPublicKey: hello.agreementPublicKey,
             name: hello.name,
             firstSeen: now
         )
@@ -58,7 +55,6 @@ public struct PeerStore: Sendable {
         let record = PeerRecord(
             id: hello.nodeID,
             signingPublicKey: hello.signingPublicKey,
-            agreementPublicKey: hello.agreementPublicKey,
             name: hello.name,
             firstSeen: firstSeen
         )

@@ -10,7 +10,6 @@ import Testing
         let b = try Identity(seed: seed)
         #expect(a.nodeID == b.nodeID)
         #expect(a.signingPublicKey == b.signingPublicKey)
-        #expect(a.agreementPublicKey == b.agreementPublicKey)
     }
 
     @Test func randomIdentitiesDiffer() {
@@ -95,7 +94,6 @@ import Testing
         let existing = PeerRecord(
             id: a.nodeID,
             signingPublicKey: c.signingPublicKey,
-            agreementPublicKey: c.agreementPublicKey,
             name: "impostor",
             firstSeen: .now
         )
@@ -132,7 +130,6 @@ import Testing
         let existing = PeerRecord(
             id: a.nodeID,
             signingPublicKey: c.signingPublicKey,
-            agreementPublicKey: c.agreementPublicKey,
             name: "impostor",
             firstSeen: .now
         )
@@ -140,7 +137,6 @@ import Testing
         let realHello = try Hello(identity: a, name: "alice", timestampMs: 1)
         let record = try store.trust(realHello, now: .now)
         #expect(record.signingPublicKey == a.signingPublicKey)
-        #expect(record.agreementPublicKey == a.agreementPublicKey)
         #expect(store.record(for: a.nodeID)?.signingPublicKey == a.signingPublicKey)
     }
 }
@@ -222,34 +218,6 @@ import Testing
     }
 }
 
-@Suite struct PairwiseSessionTests {
-    @Test func mutualDerivationInteroperates() throws {
-        let a = Identity()
-        let b = Identity()
-        let sessionA = try PairwiseSession(identity: a, remoteID: b.nodeID, remoteAgreementPublicKey: b.agreementPublicKey)
-        let sessionB = try PairwiseSession(identity: b, remoteID: a.nodeID, remoteAgreementPublicKey: a.agreementPublicKey)
-
-        let header = PacketHeader(type: .control, source: a.nodeID, destination: b.nodeID, sequence: 1)
-        let sealed = try sessionA.seal(Data("secret".utf8), header: header)
-        let opened = try sessionB.open(sealed, header: header)
-        #expect(opened == Data("secret".utf8))
-    }
-
-    @Test func thirdPartyCannotOpen() throws {
-        let a = Identity()
-        let b = Identity()
-        let c = Identity()
-        let sessionA = try PairwiseSession(identity: a, remoteID: b.nodeID, remoteAgreementPublicKey: b.agreementPublicKey)
-        let sessionC = try PairwiseSession(identity: c, remoteID: a.nodeID, remoteAgreementPublicKey: a.agreementPublicKey)
-
-        let header = PacketHeader(type: .control, source: a.nodeID, destination: b.nodeID, sequence: 1)
-        let sealed = try sessionA.seal(Data("secret".utf8), header: header)
-        #expect(throws: AEADError.self) {
-            _ = try sessionC.open(sealed, header: header)
-        }
-    }
-}
-
 @Suite struct RoomKeyTests {
     @Test func sealOpenRoundTrip() throws {
         let key = RoomKey()
@@ -277,7 +245,7 @@ import Testing
         let sealed = try roomKey.seal(Data("voice-payload".utf8), header: header)
 
         let pairwise = try PairwiseSession(
-            identity: relay, remoteID: host.nodeID, remoteAgreementPublicKey: host.agreementPublicKey
+            identity: relay, remoteID: host.nodeID, remoteEphemeralPublicKey: host.ephemeralPublicKey
         )
         #expect(throws: AEADError.self) {
             _ = try pairwise.open(sealed, header: header)
@@ -294,5 +262,49 @@ import Testing
 
     private func dataOf(_ key: SymmetricKey) -> Data {
         key.withUnsafeBytes { Data($0) }
+    }
+}
+
+@Suite struct PairwiseSessionTests {
+    private func hello(_ identity: Identity) throws -> Hello {
+        try Hello(identity: identity, name: "x", timestampMs: 1)
+    }
+
+    @Test func bothSidesDeriveTheSameKey() throws {
+        let a = Identity(), b = Identity()
+        let ab = try PairwiseSession(identity: a, remoteID: b.nodeID, remoteEphemeralPublicKey: b.ephemeralPublicKey)
+        let ba = try PairwiseSession(identity: b, remoteID: a.nodeID, remoteEphemeralPublicKey: a.ephemeralPublicKey)
+        let header = PacketHeader(type: .control, source: a.nodeID, destination: b.nodeID, sequence: 1)
+        let sealed = try ab.seal(Data("hi".utf8), header: header)
+        #expect(try ba.open(sealed, header: header) == Data("hi".utf8))
+    }
+
+    @Test func newLaunchYieldsNewKey() throws {
+        let a = Identity(), b = Identity()
+        let bRelaunched = try Identity(seed: b.seed)
+        #expect(bRelaunched.nodeID == b.nodeID)
+        #expect(bRelaunched.ephemeralPublicKey != b.ephemeralPublicKey)
+        let old = try PairwiseSession(identity: a, remoteID: b.nodeID, remoteEphemeralPublicKey: b.ephemeralPublicKey)
+        let new = try PairwiseSession(identity: bRelaunched, remoteID: a.nodeID, remoteEphemeralPublicKey: a.ephemeralPublicKey)
+        let header = PacketHeader(type: .control, source: a.nodeID, destination: b.nodeID, sequence: 1)
+        let sealed = try old.seal(Data("hi".utf8), header: header)
+        #expect(throws: AEADError.self) { try new.open(sealed, header: header) }
+    }
+
+    @Test func thirdPartyCannotOpen() throws {
+        let a = Identity(), b = Identity(), c = Identity()
+        let ab = try PairwiseSession(identity: a, remoteID: b.nodeID, remoteEphemeralPublicKey: b.ephemeralPublicKey)
+        let ca = try PairwiseSession(identity: c, remoteID: a.nodeID, remoteEphemeralPublicKey: a.ephemeralPublicKey)
+        let header = PacketHeader(type: .control, source: a.nodeID, destination: b.nodeID, sequence: 1)
+        let sealed = try ab.seal(Data("hi".utf8), header: header)
+        #expect(throws: AEADError.self) { try ca.open(sealed, header: header) }
+    }
+
+    @Test func helloCarriesSignedEphemeral() throws {
+        let a = Identity()
+        var h = try hello(a)
+        #expect(h.ephemeralPublicKey == a.ephemeralPublicKey)
+        h.ephemeralPublicKey = Identity().ephemeralPublicKey
+        #expect(!h.verify())
     }
 }

@@ -7,7 +7,7 @@ public enum PacketType: UInt8, Sendable, CaseIterable {
 /// Fixed 32-byte header. Bytes 0-22 are the AEAD associated data; TTL (byte 23) is excluded because relays decrement it.
 public struct PacketHeader: Hashable, Sendable {
     public static let size = 32
-    public static let version: UInt8 = 1
+    public static let version: UInt8 = 2
     public static let initialTTL: UInt8 = 8
 
     public var type: PacketType
