@@ -3,7 +3,8 @@ import Foundation
 
 public enum Opus {
     public static let sampleRate: Double = 48000
-    public static let frameSamples = 960   // 20 ms
+    public static let frameMs = 10
+    public static let frameSamples = Int(sampleRate) * frameMs / 1000
     public static let maxPacketBytes = 1275
 
     static var pcmFormat: AudioStreamBasicDescription {
@@ -27,7 +28,7 @@ public struct OpusError: Error, Sendable { public let status: OSStatus }
 /// Returned by the input callbacks once a frame is consumed. A zero-packet return would mark end of stream and silence every later call.
 private let noMoreInputNow: OSStatus = 0x6E6D6F72  // 'nmor'
 
-/// One converter call per 20 ms frame. Not thread-safe: the caller serializes.
+/// One converter call per frame. Not thread-safe: the caller serializes.
 public final class OpusEncoder: @unchecked Sendable {
     private var converter: AudioConverterRef?
     private var pending: UnsafeMutableBufferPointer<Float>?

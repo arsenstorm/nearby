@@ -46,7 +46,7 @@ struct DebugView: View {
 
             Section("Tuning") {
                 Stepper(
-                    "Jitter depth: \(node.jitterTargetDepth) frames (\(node.jitterTargetDepth * 20) ms)",
+                    "Jitter depth: \(node.jitterTargetDepth) frames (\(node.jitterTargetDepth * Opus.frameMs) ms)",
                     value: $node.jitterTargetDepth,
                     in: 1...25
                 )
@@ -84,7 +84,7 @@ struct DebugView: View {
 
     private var mouthToEarMs: Double {
         let path = node.voiceStats.keys.compactMap { node.pathInfo[$0]?.costMs }.min() ?? 0
-        return path + Double(node.jitterTargetDepth * 20) + 20 + node.ioLatencyMs
+        return path + Double((node.jitterTargetDepth + 1) * Opus.frameMs) + node.ioLatencyMs
     }
 
     private func pathLine(_ path: PathInfo) -> String {

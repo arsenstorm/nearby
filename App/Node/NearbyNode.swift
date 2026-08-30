@@ -35,7 +35,7 @@ final class NearbyNode {
     var pathInfo: [NodeID: PathInfo] = [:]
     var packetCounters = PacketCounters()
     var multipathLossThreshold: Double = 0.05
-    var jitterTargetDepth: Int = 3 {
+    var jitterTargetDepth: Int = 2 {
         didSet { audio?.jitterTargetDepth = jitterTargetDepth }
     }
 

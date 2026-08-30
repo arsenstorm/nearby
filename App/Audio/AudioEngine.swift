@@ -104,7 +104,7 @@ final class AudioEngine: @unchecked Sendable {
             .playAndRecord, mode: .voiceChat,
             options: [.allowBluetoothHFP, .allowBluetoothA2DP, .defaultToSpeaker])
         try session.setPreferredSampleRate(Opus.sampleRate)
-        try session.setPreferredIOBufferDuration(0.02)
+        try session.setPreferredIOBufferDuration(Double(Opus.frameMs) / 1000)
         try session.setActive(true)
         try? session.setPreferredInput(Self.preferredInput())
         installObservers()
