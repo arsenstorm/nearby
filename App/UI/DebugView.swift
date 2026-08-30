@@ -24,6 +24,7 @@ struct DebugView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+                LabeledContent("Relay", value: relayLine)
                 NavigationLink("Wi-Fi Aware pairing") { WiFiAwarePairingView() }
             }
 
@@ -80,6 +81,14 @@ struct DebugView: View {
             }
         }
         .navigationTitle("Debug")
+    }
+
+    private var relayLine: String {
+        switch node.relayEntitlement {
+        case .freeDirectOnly: "Free (direct only)"
+        case .subscriber: "Subscriber"
+        case .beta: "Beta build"
+        }
     }
 
     private var mouthToEarMs: Double {
