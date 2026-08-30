@@ -36,6 +36,7 @@ final class NearbyNode {
     var packetCounters = PacketCounters()
     var multipathLossThreshold: Double = 0.05
     var relayEntitlement: RelayEntitlement = .freeDirectOnly
+    var attestState: String = AppAttest.isSupported ? "unattested" : "no App Attest"
     var jitterTargetDepth: Int = 2 {
         didSet { audio?.jitterTargetDepth = jitterTargetDepth }
     }
@@ -89,7 +90,8 @@ final class NearbyNode {
             .ble: BLETransport(serviceName: serviceName),
             .wifiAware: WiFiAwareTransport(serviceName: serviceName),
             .internet: InternetTransport(identity: identity,
-                                         entitlement: { await RelayEntitlement.current().jws }),
+                                         entitlement: { await RelayEntitlement.current().jws },
+                                         hooks: Self.attestHooks),
         ]
         for id in TransportID.allCases {
             let supported = transports[id]?.isSupported ?? false
@@ -134,6 +136,40 @@ final class NearbyNode {
         }
         rebuildPeerLinks()
         refreshEntitlement()
+    }
+
+    // MARK: - App Attest
+    // Static, and reporting back through `current`, so the transport can be built inside init.
+
+    nonisolated static var attestHooks: InternetTransport.Hooks {
+        InternetTransport.Hooks(
+            attest: { jws, nonce in await proof(jws: jws, nonce: nonce) },
+            attestationAccepted: { keyID in
+                AppAttest.markAttested(keyID)
+                report("attested")
+            },
+            attestationRejected: {
+                AppAttest.reset()
+                report("unattested")
+            })
+    }
+
+    nonisolated private static func proof(jws: String, nonce: Data) async -> InternetTransport.RelayProof? {
+        guard AppAttest.isSupported else { return nil }
+        do {
+            let key = try await AppAttest.keyID()
+            // A key must be certified before it can sign, so attest first when it is new.
+            let attestation = key.isNew ? try await AppAttest.attestation(keyID: key.id, nonce: nonce) : nil
+            let assertion = try await AppAttest.assertion(keyID: key.id, jws: jws, nonce: nonce)
+            return .init(keyID: key.id, attestation: attestation, assertion: assertion)
+        } catch {
+            report("unattested")
+            return nil
+        }
+    }
+
+    nonisolated private static func report(_ state: String) {
+        Task { @MainActor in current?.attestState = state }
     }
 
     private func refreshEntitlement() {

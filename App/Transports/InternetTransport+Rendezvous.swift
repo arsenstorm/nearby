@@ -11,11 +11,12 @@ extension InternetTransport {
         switch type {
         case "challenge":
             guard let nonce = (json["nonce"] as? String).flatMap(Self.unhex) else { return }
+            nonces[peer] = nonce
             sendAuth(task, peer: peer, nonce: nonce)
         case "ok":
             logger.notice("auth ok \(peer.description, privacy: .public)")
             sendOffer(task, peer: peer)
-            if let pending = pendingRelay[peer] { send(["t": "relay", "entitlement": pending.jws], on: task) }
+            if let pending = pendingRelay[peer] { sendRelayFrame(peer, jws: pending.jws) }
         case "offer":
             receiveOffer(json, peer: peer)
         case "relay":
@@ -81,18 +82,45 @@ extension InternetTransport {
     /// PRD R2–R5: the Worker mints credentials only for a JWS that proves a subscription or a beta build.
     func requestRelay(_ peer: NodeID, jws: String, candidates: [Candidate]) {
         guard started, relays[peer] == nil, pendingRelay[peer] == nil else { return }
-        pendingRelay[peer] = (jws, candidates)
+        pendingRelay[peer] = (jws, candidates, nil)
         // Before "ok" the room reads any frame as the auth message, so a fresh socket waits for it.
-        guard let task = rooms[peer], offered.contains(peer) else { return dial(peer) }
-        send(["t": "relay", "entitlement": jws], on: task)
+        guard rooms[peer] != nil, offered.contains(peer) else { return dial(peer) }
+        sendRelayFrame(peer, jws: jws)
+    }
+
+    /// The proof is bound to this room's nonce, so it is built per socket: a reconnect re-signs.
+    private func sendRelayFrame(_ peer: NodeID, jws: String) {
+        guard let nonce = nonces[peer] else { return }
+        Task { [weak self, hooks] in
+            let proof = await hooks.attest(jws, nonce)
+            self?.queue.async { [weak self] in self?.sendRelayRequest(peer, jws: jws, proof: proof) }
+        }
+    }
+
+    /// Without a proof (Simulator, unsupported device) the Worker refuses with "attestation
+    /// required"; the frame is still sent so the rest of the path stays exercised.
+    private func sendRelayRequest(_ peer: NodeID, jws: String, proof: RelayProof?) {
+        guard let task = rooms[peer], pendingRelay[peer] != nil else { return }
+        pendingRelay[peer]?.proof = proof
+        var frame: [String: Any] = ["t": "relay", "entitlement": jws]
+        if let proof {
+            frame["keyId"] = proof.keyID
+            frame["assertion"] = proof.assertion.base64EncodedString()
+            if let attestation = proof.attestation { frame["attestation"] = attestation.base64EncodedString() }
+        }
+        send(frame, on: task)
     }
 
     func receiveRelay(_ json: [String: Any], peer: NodeID) {
         guard let pending = pendingRelay.removeValue(forKey: peer) else { return }
         guard json["ok"] as? Bool == true, let credentials = Self.credentials(json["turn"]) else {
             let reason = json["reason"] as? String ?? "malformed"
-            return logger.error("relay refused for \(peer.description, privacy: .public): \(reason, privacy: .public)")
+            logger.error("relay refused for \(peer.description, privacy: .public): \(reason, privacy: .public)")
+            // The Worker will never accept this key again; drop it rather than retry into a loop.
+            if reason == "attestation required", pending.proof != nil { hooks.attestationRejected() }
+            return
         }
+        if let proof = pending.proof, proof.attestation != nil { hooks.attestationAccepted(proof.keyID) }
         beginRelay(peer, candidates: pending.candidates, credentials: credentials)
     }
 
