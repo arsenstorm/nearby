@@ -35,6 +35,21 @@ console.log("a. valid subscription: pass");
 assert.equal(await verify(chain.jws(subscription({ expiresDate: now - DAY_MS }))), null);
 console.log("b. expired subscription: pass");
 
+// b2. Lapsed subscription inside a billing grace period, proven by its renewal info.
+{
+  const lapsed = subscription({ expiresDate: now - DAY_MS, originalTransactionId: "1000000123" });
+  const renewal = (overrides = {}) => ({ originalTransactionId: "1000000123", gracePeriodExpiresDate: now + 2 * DAY_MS, ...overrides });
+  const pair = (r) => `${chain.jws(lapsed)},${chain.jws(r)}`;
+  assert.deepEqual(await verify(pair(renewal())), { kind: "subscriber", expiresMs: now + 2 * DAY_MS });
+  assert.equal(await verify(pair(renewal({ gracePeriodExpiresDate: now - 1 }))), null);
+  assert.equal(await verify(pair(renewal({ originalTransactionId: "999" }))), null);
+  assert.equal(await verify(pair(renewal({ gracePeriodExpiresDate: undefined }))), null);
+  // A live subscription ignores the renewal half; a renewal cannot revive a revoked one.
+  assert.deepEqual(await verify(`${chain.jws(subscription())},${chain.jws(renewal())}`), { kind: "subscriber", expiresMs: now + 30 * DAY_MS });
+  assert.equal(await verify(`${chain.jws(subscription({ expiresDate: now - DAY_MS, originalTransactionId: "1000000123", revocationDate: now - DAY_MS }))},${chain.jws(renewal())}`), null);
+}
+console.log("b2. billing grace period: pass");
+
 // c. Wrong productId.
 assert.equal(await verify(chain.jws(subscription({ productId: `${PRODUCT}.other` }))), null);
 console.log("c. wrong productId: pass");
