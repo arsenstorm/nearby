@@ -58,6 +58,7 @@ final class AudioEngine: @unchecked Sendable {
 
     /// Sink (render) thread only.
     private var encoder: OpusEncoder?
+    private var gate = SilenceGate()
     /// Sink (render) thread only.
     private var converter: AVAudioConverter?
     /// Sink (render) thread only.
@@ -267,6 +268,7 @@ final class AudioEngine: @unchecked Sendable {
         while accumulator.count >= Opus.frameSamples {
             for i in 0..<Opus.frameSamples { scratch[i] = accumulator[i] }
             accumulator.removeFirst(Opus.frameSamples)
+            guard gate.admits(rms: scratch.withUnsafeBufferPointer(SilenceGate.rms)) else { continue }
             if let packet = try? scratch.withUnsafeMutableBufferPointer({ try encoder.encode($0) }), !packet.isEmpty {
                 onFrame(packet)
             }
