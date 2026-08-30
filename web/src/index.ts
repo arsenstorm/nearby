@@ -1,8 +1,8 @@
-import { PairRoom } from "./pair";
+import { PairRoom, type Env as PairEnv } from "./pair";
 
 export { PairRoom };
 
-export interface Env {
+export interface Env extends PairEnv {
   PAIR: DurableObjectNamespace<PairRoom>;
   PAIR_RL: RateLimit;
   ASSETS: Fetcher;
