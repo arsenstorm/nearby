@@ -19,6 +19,14 @@ enum IdentityStore {
         return identity
     }
 
+    /// PRD R20: a fresh identity, replacing the stored seed. `storeSeed` already deletes before
+    /// adding, so this overwrites rather than failing on a duplicate Keychain item.
+    static func regenerate() -> Identity {
+        let identity = Identity()
+        storeSeed(identity.seed)
+        return identity
+    }
+
     private static func loadSeed() -> Data? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,

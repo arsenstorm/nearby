@@ -91,7 +91,24 @@ extension NearbyNode {
     }
 
     func syncInternetPeers() {
-        (transports[.internet] as? InternetTransport)?.setPeers(Set(peerStore.records.keys))
+        (transports[.internet] as? InternetTransport)?.setPeers(Set(peerStore.records.keys).subtracting(blocked))
+    }
+
+    /// PRD R19: blocking drops the peer outright, not just the internet dial.
+    func block(_ id: NodeID) {
+        blocked.insert(id)
+        BlockListFile.save(blocked)
+        peers.removeAll { $0.id == id }
+        sessions[id] = nil
+        let now = Date()
+        for link in mesh.links(to: id) { mesh.linkDown(link, now: now) }
+        syncInternetPeers()
+    }
+
+    func unblock(_ id: NodeID) {
+        blocked.remove(id)
+        BlockListFile.save(blocked)
+        syncInternetPeers()
     }
 
     func trustKeyChange() {

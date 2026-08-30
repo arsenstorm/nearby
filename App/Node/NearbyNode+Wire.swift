@@ -218,6 +218,7 @@ extension NearbyNode {
 
     private func receiveHello(_ payload: Data, from link: LinkID, direct: Bool) {
         guard let hello = try? Hello.decode(payload) else { return }
+        guard !blocked.contains(hello.nodeID) else { return }
         guard hello.timestampMs > helloTimestamps[hello.nodeID, default: 0] else { return }
         let now = Date()
         let before = peerStore.record(for: hello.nodeID)
