@@ -13,12 +13,22 @@ struct WiFiAwarePairingView: View {
                 Text("Wi-Fi Aware pairing needs two real phones.")
                     .foregroundStyle(.secondary)
                 #else
-                if let service = WAPublishableService.allServices[WiFiAwareTransport.serviceType] {
-                    DevicePairingView(.wifiAware(.connecting(to: service, from: .allPairedDevices))) {
-                        Label("Pair a phone", systemImage: "wifi")
+                // Pairing is asymmetric: one phone publishes (top row), the other browses for it
+                // (bottom row). Two publishers never see each other.
+                if let publishable = WAPublishableService.allServices[WiFiAwareTransport.serviceType],
+                   let subscribable = WASubscribableService.allServices[WiFiAwareTransport.serviceType] {
+                    DevicePairingView(.wifiAware(.connecting(to: publishable, from: .allPairedDevices))) {
+                        Label("Be discoverable", systemImage: "wifi")
                     } fallback: {
                         Text("This phone does not support Wi-Fi Aware.")
                             .foregroundStyle(.secondary)
+                    }
+                    DevicePicker(.wifiAware(.connecting(to: .selected([]), from: subscribable))) { _ in
+                        // The system stores the pairing; the transport's browser picks it up.
+                    } label: {
+                        Label("Find a phone", systemImage: "magnifyingglass")
+                    } fallback: {
+                        EmptyView()
                     }
                 } else {
                     Text("\(WiFiAwareTransport.serviceType) is not declared in Info.plist.")
@@ -26,7 +36,7 @@ struct WiFiAwarePairingView: View {
                 }
                 #endif
             } footer: {
-                Text("Pair once; after that the two phones find each other with no network.")
+                Text("Tap “Be discoverable” on one phone and “Find a phone” on the other. Pair once; after that the two phones find each other with no network.")
             }
 
             Section("Paired devices") {
