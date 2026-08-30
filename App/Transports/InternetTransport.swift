@@ -18,22 +18,24 @@ final class InternetTransport: Transport, @unchecked Sendable {
     private static let retryDelay: TimeInterval = 30
 
     private let continuation: AsyncStream<TransportEvent>.Continuation
-    private let queue = DispatchQueue(label: "nearby.transport.internet")
-    private let logger = Logger(subsystem: "com.arsenstorm.nearby", category: "internet")
-    private let identity: Identity
+    let queue = DispatchQueue(label: "nearby.transport.internet")
+    let logger = Logger(subsystem: "com.arsenstorm.nearby", category: "internet")
+    let identity: Identity
     private let rendezvous: URL
-    private let relayCredentials: @Sendable (NodeID) async -> TURNCredentials?
+    private let entitlement: @Sendable () async -> String?
 
     private var socket: UDPSocket?
-    private var probe: NATProbe?
-    private var started = false
+    var probe: NATProbe?
+    var started = false
     private var peers: Set<NodeID> = []
-    private var rooms: [NodeID: URLSessionWebSocketTask] = [:]
-    private var offered: Set<NodeID> = []
-    private var mine: [NodeID: [Candidate]] = [:]
+    var rooms: [NodeID: URLSessionWebSocketTask] = [:]
+    var offered: Set<NodeID> = []
+    var mine: [NodeID: [Candidate]] = [:]
     private var punching: [NodeID: (candidates: [Candidate], deadline: Date)] = [:]
     private var links: [LinkID: Link] = [:]
-    private var relays: [NodeID: TURNClient] = [:]
+    var relays: [NodeID: TURNClient] = [:]
+    /// A relay asked for but not yet answered; the reply needs the candidates the punch failed on.
+    var pendingRelay: [NodeID: (jws: String, candidates: [Candidate])] = [:]
     private var keepaliveTimer: DispatchSourceTimer?
 
     private struct Link {
@@ -44,10 +46,10 @@ final class InternetTransport: Transport, @unchecked Sendable {
     }
 
     init(identity: Identity, rendezvous: URL = URL(string: "wss://nearby.arsenstorm.com/pair/")!,
-         relayCredentials: @escaping @Sendable (NodeID) async -> TURNCredentials? = { _ in nil }) {
+         entitlement: @escaping @Sendable () async -> String? = { nil }) {
         self.identity = identity
         self.rendezvous = rendezvous
-        self.relayCredentials = relayCredentials
+        self.entitlement = entitlement
         (self.events, self.continuation) = AsyncStream.makeStream(of: TransportEvent.self)
     }
 
@@ -91,6 +93,7 @@ final class InternetTransport: Transport, @unchecked Sendable {
                 rooms.removeAll()
                 offered.removeAll()
                 punching.removeAll()
+                pendingRelay.removeAll()
                 for relay in relays.values { relay.close() }
                 relays.removeAll()
                 for link in links.keys { continuation.yield(.linkDown(link)) }
@@ -117,7 +120,7 @@ final class InternetTransport: Transport, @unchecked Sendable {
 
     // MARK: - Rendezvous
 
-    private func dial(_ peer: NodeID) {
+    func dial(_ peer: NodeID) {
         guard started, rooms[peer] == nil, !hasLink(peer) else { return }
         let room = PairRoom.name(identity.nodeID, peer)
         let task = URLSession.shared.webSocketTask(with: rendezvous.appendingPathComponent(room))
@@ -147,76 +150,7 @@ final class InternetTransport: Transport, @unchecked Sendable {
         }
     }
 
-    private func handleFrame(_ text: String, peer: NodeID, task: URLSessionWebSocketTask) {
-        guard let json = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
-              let type = json["t"] as? String
-        else { return }
-        switch type {
-        case "challenge":
-            guard let nonce = (json["nonce"] as? String).flatMap(Self.unhex) else { return }
-            sendAuth(task, peer: peer, nonce: nonce)
-        case "ok":
-            logger.notice("auth ok \(peer.description, privacy: .public)")
-            sendOffer(task, peer: peer)
-        case "offer":
-            receiveOffer(json, peer: peer)
-        default:
-            break
-        }
-    }
-
-    private func sendAuth(_ task: URLSessionWebSocketTask, peer: NodeID, nonce: Data) {
-        let room = PairRoom.name(identity.nodeID, peer)
-        guard let signature = try? PairRoom.authSignature(identity: identity, nonce: nonce, room: room) else { return }
-        send([
-            "t": "auth",
-            "nodeID": identity.nodeID.description,
-            "peerID": peer.description,
-            "signingKey": identity.signingPublicKey.base64EncodedString(),
-            "sig": signature.base64EncodedString(),
-        ], on: task)
-    }
-
-    private func sendOffer(_ task: URLSessionWebSocketTask, peer: NodeID) {
-        guard let probe, !offered.contains(peer) else { return }
-        offered.insert(peer)
-        Task { [weak self, logger] in
-            let gathered = (try? await probe.gatherCandidates()) ?? []
-            if gathered.isEmpty { logger.error("gather failed for \(peer.description, privacy: .public)") }
-            let candidates = gathered.isEmpty ? probe.hostAddresses() : gathered
-            guard let self else { return }
-            queue.async { [weak self] in self?.finishOffer(task, peer: peer, candidates: candidates) }
-        }
-    }
-
-    private func finishOffer(_ task: URLSessionWebSocketTask, peer: NodeID, candidates: [Candidate]) {
-        guard rooms[peer] === task else { return }
-        guard !candidates.isEmpty else {
-            logger.error("no candidates for \(peer.description, privacy: .public)")
-            closeRoom(peer)
-            return retryLater(peer)
-        }
-        let timestampMs = UInt64(Date().timeIntervalSince1970 * 1000)
-        // The name is irrelevant here; the beacon Hello over the punched link supplies the real one.
-        guard let hello = try? Hello(identity: identity, name: "", timestampMs: timestampMs),
-              let encoded = try? hello.encode()
-        else { return }
-        mine[peer] = candidates.filter { $0.kind != .relay }
-        send(["t": "offer", "hello": encoded.base64EncodedString(), "candidates": candidates.map(\.text)], on: task)
-        logger.notice("offer sent to \(peer.description, privacy: .public), \(candidates.count) candidates")
-    }
-
-    private func receiveOffer(_ json: [String: Any], peer: NodeID) {
-        guard let encoded = (json["hello"] as? String).flatMap({ Data(base64Encoded: $0) }),
-              let hello = try? Hello.decode(encoded), hello.verify(), hello.nodeID == peer
-        else { return logger.error("bad offer from \(peer.description, privacy: .public)") }
-        let candidates = ((json["candidates"] as? [String]) ?? []).compactMap(Candidate.init(text:))
-        guard !candidates.isEmpty else { return }
-        logger.notice("offer from \(peer.description, privacy: .public), \(candidates.count) candidates")
-        startPunch(peer, candidates: candidates)
-    }
-
-    private func send(_ frame: [String: Any], on task: URLSessionWebSocketTask) {
+    func send(_ frame: [String: Any], on task: URLSessionWebSocketTask) {
         guard let data = try? JSONSerialization.data(withJSONObject: frame) else { return }
         task.send(.string(String(decoding: data, as: UTF8.self))) { [weak self] error in
             guard let error else { return }
@@ -224,12 +158,12 @@ final class InternetTransport: Transport, @unchecked Sendable {
         }
     }
 
-    private func closeRoom(_ peer: NodeID) {
+    func closeRoom(_ peer: NodeID) {
         rooms.removeValue(forKey: peer)?.cancel()
         offered.remove(peer)
     }
 
-    private func retryLater(_ peer: NodeID) {
+    func retryLater(_ peer: NodeID) {
         queue.asyncAfter(deadline: .now() + Self.retryDelay) { [weak self] in
             guard let self, self.peers.contains(peer) else { return }
             self.dial(peer)
@@ -238,7 +172,7 @@ final class InternetTransport: Transport, @unchecked Sendable {
 
     // MARK: - Punching
 
-    private func startPunch(_ peer: NodeID, candidates: [Candidate]) {
+    func startPunch(_ peer: NodeID, candidates: [Candidate]) {
         let deadline = Date().addingTimeInterval(Self.punchWindow)
         punching[peer] = (candidates, deadline)
         logger.notice("punch \(peer.description, privacy: .public)")
@@ -263,14 +197,14 @@ final class InternetTransport: Transport, @unchecked Sendable {
 
     /// PRD R7/R9: only after the direct window fails do we pay for a TURN allocation.
     private func startRelay(_ peer: NodeID, candidates: [Candidate]) {
-        guard started, relays[peer] == nil, !hasLink(peer) else { return }
-        Task { [weak self, relayCredentials] in
-            guard let credentials = await relayCredentials(peer) else { return }
-            self?.queue.async { [weak self] in self?.beginRelay(peer, candidates: candidates, credentials: credentials) }
+        guard started, relays[peer] == nil, pendingRelay[peer] == nil, !hasLink(peer) else { return }
+        Task { [weak self, entitlement] in
+            guard let jws = await entitlement() else { return }
+            self?.queue.async { [weak self] in self?.requestRelay(peer, jws: jws, candidates: candidates) }
         }
     }
 
-    private func beginRelay(_ peer: NodeID, candidates: [Candidate], credentials: TURNCredentials) {
+    func beginRelay(_ peer: NodeID, candidates: [Candidate], credentials: TURNCredentials) {
         guard started, relays[peer] == nil, let socket else { return }
         let client = TURNClient(credentials: credentials,
                                 send: { [weak socket] data, host, port in socket?.send(data, to: host, port: port) },
@@ -339,7 +273,10 @@ final class InternetTransport: Transport, @unchecked Sendable {
         guard let peer = peerOwning(host: host, port: port) else { return }
         links[link] = Link(peer: peer, host: host, port: port, lastHeard: Date())
         punching[peer] = nil
-        closeRoom(peer)
+        // PRD R9 renews TURN credentials over this same socket, so a relayed link keeps its room.
+        // ponytail: credentials are not renewed; a relayed call drops at the 10-min TTL. Renew by
+        // re-sending the relay frame at ttl/2 and updating TURNClient's password.
+        if relays[peer] == nil { closeRoom(peer) }
         logger.notice("link up \(link.description, privacy: .public) to \(peer.description, privacy: .public)")
         continuation.yield(.linkUp(link))
     }
@@ -371,7 +308,7 @@ final class InternetTransport: Transport, @unchecked Sendable {
         links.values.contains { $0.peer == peer }
     }
 
-    private static func unhex(_ text: String) -> Data? {
+    static func unhex(_ text: String) -> Data? {
         guard text.count % 2 == 0 else { return nil }
         var out = Data(capacity: text.count / 2)
         var index = text.startIndex

@@ -35,6 +35,7 @@ final class NearbyNode {
     var pathInfo: [NodeID: PathInfo] = [:]
     var packetCounters = PacketCounters()
     var multipathLossThreshold: Double = 0.05
+    var relayEntitlement: RelayEntitlement = .freeDirectOnly
     var jitterTargetDepth: Int = 2 {
         didSet { audio?.jitterTargetDepth = jitterTargetDepth }
     }
@@ -87,7 +88,8 @@ final class NearbyNode {
             .p2pWiFi: DatagramTransport(id: .p2pWiFi, peerToPeer: true, serviceName: serviceName),
             .ble: BLETransport(serviceName: serviceName),
             .wifiAware: WiFiAwareTransport(serviceName: serviceName),
-            .internet: InternetTransport(identity: identity),
+            .internet: InternetTransport(identity: identity,
+                                         entitlement: { await RelayEntitlement.current().jws }),
         ]
         for id in TransportID.allCases {
             let supported = transports[id]?.isSupported ?? false
@@ -110,6 +112,7 @@ final class NearbyNode {
             startTransport(id, transport)
         }
         syncInternetPeers()
+        refreshEntitlement()
         timers.append(every(1) { [self] in broadcastHello() })
         timers.append(every(1) { [self] in prune() })
         timers.append(every(2) { [self] in announceHostedRoom() })
@@ -130,6 +133,11 @@ final class NearbyNode {
             }
         }
         rebuildPeerLinks()
+        refreshEntitlement()
+    }
+
+    private func refreshEntitlement() {
+        Task { @MainActor [self] in relayEntitlement = await RelayEntitlement.current().state }
     }
 
     func setTransport(_ id: TransportID, enabled: Bool) {
