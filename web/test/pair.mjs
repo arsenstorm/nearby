@@ -5,15 +5,22 @@ import assert from "node:assert/strict";
 import { generateKeyPairSync, sign as edSign, createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { makeChain } from "./chain.mjs";
+import { makeAppAttest, makeChain } from "./chain.mjs";
 
 const PORT = 8790;
+const PAUSED_PORT = 8791;
 const BASE = `http://127.0.0.1:${PORT}`;
 const WS_BASE = `ws://127.0.0.1:${PORT}`;
 const WEB_DIR = fileURLToPath(new URL("..", import.meta.url));
 const DOMAIN = "nearby-pair-v1";
 const BUNDLE_ID = "com.arsenstorm.nearby";
+const TEAM_ID = "ABCDE12345";
+// Two grants' worth, so the third relay in the run runs the node out of allowance (case j).
+const ALLOWANCE_MINUTES = 20;
 
 // ---- crypto / protocol helpers ----
 
@@ -64,15 +71,15 @@ function startTurnServer() {
         assert.equal(body, JSON.stringify({ ttl: 600 }));
         res.writeHead(200, { "Content-Type": "application/json" }).end(
           JSON.stringify({
-            iceServers: {
-              urls: [
-                "stun:stun.cloudflare.com:3478",
-                "turn:turn.cloudflare.com:3478?transport=udp",
-                "turn:turn.cloudflare.com:3478?transport=tcp",
-              ],
-              username: "u1",
-              credential: "c1",
-            },
+            // Cloudflare's documented shape: a STUN entry, then the TURN entry carrying credentials.
+            iceServers: [
+              { urls: ["stun:stun.cloudflare.com:3478"] },
+              {
+                urls: ["turn:turn.cloudflare.com:3478?transport=udp", "turn:turn.cloudflare.com:3478?transport=tcp"],
+                username: "u1",
+                credential: "c1",
+              },
+            ],
           }),
         );
       });
@@ -82,17 +89,37 @@ function startTurnServer() {
 }
 
 // ---- wrangler dev lifecycle ----
+// Two instances run side by side: the normal one, and a second with BUDGET_PAUSED_OVERRIDE set for
+// case k. Separate --persist-to directories keep their KV and Durable Object state apart (and keep
+// each run independent of the last).
 
-let proc;
+const procs = [];
 let turnServerHandle;
 process.on("exit", () => {
-  try {
-    proc?.kill();
-  } catch {}
+  for (const proc of procs) {
+    try {
+      proc.kill();
+    } catch {}
+  }
   try {
     turnServerHandle?.close();
   } catch {}
 });
+
+function startWorker(port, vars) {
+  const args = ["wrangler", "dev", "--port", String(port), "--local",
+    // Both instances run at once, so neither may take the default inspector port.
+    "--inspector-port", String(port + 1000),
+    "--persist-to", mkdtempSync(join(tmpdir(), "nearby-wrangler-")),
+    ...Object.entries(vars).flatMap(([name, value]) => ["--var", `${name}:${value}`])];
+  const proc = spawn("npx", args, { cwd: WEB_DIR, stdio: ["ignore", "pipe", "pipe"] });
+  proc.log = "";
+  proc.stdout.on("data", (d) => (proc.log += d));
+  proc.stderr.on("data", (d) => (proc.log += d));
+  proc.on("error", (err) => console.error("failed to spawn wrangler:", err));
+  procs.push(proc);
+  return proc;
+}
 
 async function waitReady(url, timeoutMs = 60_000, intervalMs = 500) {
   const start = Date.now();
@@ -133,15 +160,17 @@ function waitClose(ws) {
 // arrives. `room` is both the URL path segment and the room hashed into the signed challenge —
 // that's what the server actually treats as the Durable Object's identity, independent of
 // whatever peerID is claimed in the auth frame.
-function connect(keys, myID, peerID, room, { signWith = keys } = {}) {
+function connect(keys, myID, peerID, room, { signWith = keys, base = WS_BASE } = {}) {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`${WS_BASE}/pair/${room}`);
+    const ws = new WebSocket(`${base}/pair/${room}`);
     const onClose = (ev) => reject(Object.assign(new Error("closed before ok"), { code: ev.code, reason: ev.reason }));
     ws.addEventListener("close", onClose);
     ws.addEventListener("error", () => {});
     ws.addEventListener("message", function onMessage(ev) {
       const msg = JSON.parse(ev.data);
       if (msg.t === "challenge") {
+        // The App Attest challenge is this socket's nonce, so relay frames need it later.
+        ws.roomNonce = msg.nonce;
         const sig = signChallenge(signWith.privateKey, msg.nonce, room);
         const signingKey = Buffer.from(rawPublicKey(keys)).toString("base64");
         ws.send(JSON.stringify({ t: "auth", nodeID: myID, peerID, signingKey, sig: sig.toString("base64") }));
@@ -181,35 +210,41 @@ function attemptClose(keys, myID, peerID, room, { signWith = keys, timeoutMs = 1
 
 // ---- test run ----
 
+// The relay request frame the Worker now expects: entitlement JWS, App Attest keyId, the
+// attestation on first contact, and an assertion over utf8(jws) ‖ unhex(roomNonce) every time.
+function relayFrame(ws, jws, credential, counter, { attestation = false, assertion = true } = {}) {
+  const clientData = Buffer.concat([Buffer.from(jws, "utf8"), Buffer.from(ws.roomNonce, "hex")]);
+  return JSON.stringify({
+    t: "relay",
+    entitlement: jws,
+    keyId: credential.keyId.toString("base64"),
+    ...(attestation ? { attestation: credential.attestation.toString("base64") } : {}),
+    ...(assertion ? { assertion: credential.assertion(clientData, counter).toString("base64") } : {}),
+  });
+}
+
 async function main() {
-  // The room trusts APPLE_TEST_ROOT on top of the pinned Apple root, so the throwaway chain
-  // below verifies in the Worker. That var is never set in production (see wrangler.jsonc).
+  // The room trusts APPLE_TEST_ROOT and APP_ATTEST_TEST_ROOT on top of the pinned Apple roots, so
+  // the throwaway chains below verify in the Worker. Neither var is ever set in production.
   const chain = makeChain();
-  const testRoot = chain.rootDer.toString("base64");
+  const attest = makeAppAttest({ teamId: TEAM_ID, bundleId: BUNDLE_ID });
   turnServerHandle = await startTurnServer();
-  const turnBase = `http://127.0.0.1:${turnServerHandle.address().port}`;
-  const args = [
-    "wrangler", "dev", "--port", String(PORT), "--local",
-    "--var", `APPLE_TEST_ROOT:${testRoot}`,
-    "--var", `TURN_KEY_ID:test-key`,
-    "--var", `TURN_API_TOKEN:test-token`,
-    "--var", `TURN_API_BASE:${turnBase}`,
-  ];
-  proc = spawn("npx", args, {
-    cwd: WEB_DIR,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  let out = "";
-  proc.stdout.on("data", (d) => (out += d));
-  proc.stderr.on("data", (d) => (out += d));
-  proc.on("error", (err) => {
-    console.error("failed to spawn wrangler:", err);
-  });
+  const vars = {
+    APPLE_TEST_ROOT: chain.rootDer.toString("base64"),
+    APP_ATTEST_TEST_ROOT: attest.rootDer.toString("base64"),
+    APP_ATTEST_TEAM_ID: TEAM_ID,
+    ALLOWANCE_MINUTES: String(ALLOWANCE_MINUTES),
+    TURN_KEY_ID: "test-key",
+    TURN_API_TOKEN: "test-token",
+    TURN_API_BASE: `http://127.0.0.1:${turnServerHandle.address().port}`,
+  };
+  startWorker(PORT, vars);
+  startWorker(PAUSED_PORT, { ...vars, BUDGET_PAUSED_OVERRIDE: "1" });
 
   try {
-    await waitReady(`${BASE}/`);
+    await Promise.all([waitReady(`${BASE}/`), waitReady(`http://127.0.0.1:${PAUSED_PORT}/`)]);
   } catch (err) {
-    console.error(out);
+    console.error(procs.map((p) => p.log).join("\n"));
     throw err;
   }
 
@@ -274,12 +309,14 @@ async function main() {
   }
   console.log("f. oversize frame closes 1009: pass");
 
-  // g. Relay frames are answered to the sender and never forwarded to the peer.
+  // g. Relay frames are answered to the sender and never forwarded to the peer. The first one
+  // also registers A's App Attest key, so it carries the attestation; later ones assert only.
   wsA = await connect(A, idA, idB, roomAB);
+  const credential = attest.credential(Buffer.from(wsA.roomNonce, "hex"));
+  const jws = chain.jws({ bundleId: BUNDLE_ID, receiptType: "Sandbox" });
   {
-    const jws = chain.jws({ bundleId: BUNDLE_ID, receiptType: "Sandbox" });
     const before = turnServer.requests;
-    wsA.send(JSON.stringify({ t: "relay", entitlement: jws }));
+    wsA.send(relayFrame(wsA, jws, credential, 1, { attestation: true }));
     assert.deepEqual(JSON.parse(await nextMessage(wsA)), {
       t: "relay",
       ok: true,
@@ -287,7 +324,7 @@ async function main() {
       turn: { host: "turn.cloudflare.com", port: 3478, username: "u1", credential: "c1", ttl: 600 },
     });
     assert.equal(turnServer.requests, before + 1);
-    wsA.send(JSON.stringify({ t: "relay", entitlement: "garbage" }));
+    wsA.send(relayFrame(wsA, "garbage", credential, 2));
     assert.deepEqual(JSON.parse(await nextMessage(wsA)), { t: "relay", ok: false, reason: "not entitled" });
     // Whatever B sees next must be this frame, so neither relay frame reached it.
     const after = JSON.stringify({ t: "hello", after: "relay" });
@@ -299,11 +336,37 @@ async function main() {
   // h. TURN key-server failure doesn't crash the room; the caller sees ok:false instead.
   {
     turnServer.failNext = true;
-    const jws = chain.jws({ bundleId: BUNDLE_ID, receiptType: "Sandbox" });
-    wsA.send(JSON.stringify({ t: "relay", entitlement: jws }));
+    wsA.send(relayFrame(wsA, jws, credential, 3));
     assert.deepEqual(JSON.parse(await nextMessage(wsA)), { t: "relay", ok: false, reason: "relay unavailable" });
   }
   console.log("h. TURN mint failure replies ok:false: pass");
+
+  // i. No assertion at all: entitlement alone buys nothing (PRD R17).
+  {
+    wsA.send(relayFrame(wsA, jws, credential, 4, { assertion: false }));
+    assert.deepEqual(JSON.parse(await nextMessage(wsA)), { t: "relay", ok: false, reason: "attestation required" });
+  }
+  console.log("i. missing assertion rejected: pass");
+
+  // j. Allowance (PRD R15): g and h each charged a 10-minute grant, exhausting the 20 above.
+  {
+    wsA.send(relayFrame(wsA, jws, credential, 5));
+    assert.deepEqual(JSON.parse(await nextMessage(wsA)), { t: "relay", ok: false, reason: "allowance exhausted" });
+    assert.deepEqual(await (await fetch(`${BASE}/relay/status`)).json(), { paused: false, monthBytes: 0 });
+  }
+  console.log("j. allowance exhausted after two grants: pass");
+
+  // k. Budget kill switch (PRD R16): the paused instance refuses everyone, before it even looks
+  // at attestation or entitlement.
+  {
+    const pausedBase = `http://127.0.0.1:${PAUSED_PORT}`;
+    const wsP = await connect(A, idA, idB, roomAB, { base: `ws://127.0.0.1:${PAUSED_PORT}` });
+    wsP.send(relayFrame(wsP, jws, credential, 1, { attestation: true }));
+    assert.deepEqual(JSON.parse(await nextMessage(wsP)), { t: "relay", ok: false, reason: "relay paused" });
+    assert.deepEqual(await (await fetch(`${pausedBase}/relay/status`)).json(), { paused: true, monthBytes: 0 });
+    wsP.close();
+  }
+  console.log("k. relay paused while over budget: pass");
 
   console.log("all cases passed");
 }

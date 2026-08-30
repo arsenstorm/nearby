@@ -1,13 +1,18 @@
 import { DurableObject } from "cloudflare:workers";
-import { verifyEntitlement } from "./apple";
-import { mintTurnCredentials } from "./turn";
+import { chargeAllowance } from "./allowance.ts";
+import { verifyEntitlement } from "./apple.ts";
+import { verifyAssertion, verifyAttestation } from "./attest.ts";
+import { relayPaused, type BudgetEnv } from "./budget.ts";
+import { mintTurnCredentials } from "./turn.ts";
+import { concat } from "./x509.ts";
 
 // One room per pair of nodes, named sha256(lo.bytes ‖ hi.bytes) of the two 8-byte NodeIDs, so a room is
 // addressable only by someone who already knows both IDs. Two authenticated slots; frames are forwarded
 // opaquely between them, except `{"t":"relay"}` which the room answers itself.
 const MAX_MESSAGE = 2048;
-// A relay frame carries a StoreKit JWS with its whole x5c chain inline, several KiB of base64.
-const MAX_RELAY = 16_384;
+// A relay frame carries a StoreKit JWS with its whole x5c chain inline plus, on a node's first
+// request, an App Attest attestation object — together a good 12 KiB of base64.
+const MAX_RELAY = 24_576;
 const AUTH_DEADLINE_MS = 5_000;
 const PENDING_TTL_MS = 60_000;
 const SWEEP_MS = 5_000;
@@ -18,13 +23,22 @@ const RELAY_TTL_S = 600;
 type Slot = { since: number; nonce: string; nodeID?: string; peerID?: string };
 type Pending = { at: number; message: string };
 type Auth = { t: "auth"; nodeID: string; peerID: string; signingKey: string; sig: string };
+type Relay = { entitlement: string; keyId: string; attestation: string; assertion: string };
+// What we remember per node between relay requests: the App Attest key and its replay counter.
+type Attested = { spki: string; counter: number };
 
-export interface Env {
+export interface Env extends BudgetEnv {
   APPLE_BUNDLE_ID: string;
   APPLE_PRODUCT_ID: string;
   APPLE_ROOT_CA_G3: string;
   // Extra trust anchor for the integration test only. Never set this in production.
   APPLE_TEST_ROOT?: string;
+  APP_ATTEST_TEAM_ID: string;
+  APP_ATTEST_BUNDLE_ID: string;
+  APP_ATTEST_ROOT: string;
+  // Extra App Attest trust anchor for the integration test only. Never set this in production.
+  APP_ATTEST_TEST_ROOT?: string;
+  ALLOWANCE_MINUTES: string;
   TURN_KEY_ID: string;
   TURN_API_TOKEN: string;
   // Only overridden by tests, against a fake local server.
@@ -51,8 +65,8 @@ export class PairRoom extends DurableObject<Env> {
       if (message.length > MAX_MESSAGE) return ws.close(1009, "too big");
       return this.authenticate(ws, slot, message);
     }
-    const jws = parseRelay(message);
-    if (jws !== null) return this.handleRelay(ws, jws);
+    const relay = parseRelay(message);
+    if (relay !== null) return this.handleRelay(ws, slot, relay);
     if (message.length > MAX_MESSAGE) return ws.close(1009, "too big");
     return this.forward(slot.nodeID, slot.peerID, message);
   }
@@ -108,19 +122,52 @@ export class PairRoom extends DurableObject<Env> {
     return ids.size >= 2;
   }
 
-  private async handleRelay(ws: WebSocket, jws: string): Promise<void> {
-    const roots = [this.env.APPLE_ROOT_CA_G3, this.env.APPLE_TEST_ROOT].filter((root): root is string => !!root).map(base64);
-    const entitlement = await verifyEntitlement(jws, {
+  // A relay request is always answered, never fatal: a peer that is out of allowance or fails
+  // attestation keeps its socket and carries on trying to connect directly.
+  private async handleRelay(ws: WebSocket, slot: Slot, relay: Relay): Promise<void> {
+    ws.send(JSON.stringify({ t: "relay", ...(await this.grantRelay(slot, relay)) }));
+  }
+
+  private async grantRelay(slot: Slot, relay: Relay): Promise<Record<string, unknown>> {
+    if (await relayPaused(this.env)) return { ok: false, reason: "relay paused" };
+    if (!(await this.attested(slot, relay))) return { ok: false, reason: "attestation required" };
+    const roots = anchors(this.env.APPLE_ROOT_CA_G3, this.env.APPLE_TEST_ROOT);
+    const entitlement = await verifyEntitlement(relay.entitlement, {
       bundleId: this.env.APPLE_BUNDLE_ID,
       productId: this.env.APPLE_PRODUCT_ID,
       rootCertsDer: roots,
     });
-    if (!entitlement) return ws.send(JSON.stringify({ t: "relay", ok: false, reason: "not entitled" }));
+    if (!entitlement) return { ok: false, reason: "not entitled" };
+    const limit = Number(this.env.ALLOWANCE_MINUTES);
+    if (!(await chargeAllowance(this.env.RELAY, slot.nodeID!, RELAY_TTL_S / 60, limit))) {
+      return { ok: false, reason: "allowance exhausted" };
+    }
     const turn = await mintTurnCredentials(this.env, RELAY_TTL_S);
-    const reply = turn
-      ? { t: "relay", ok: true, entitlement: entitlement.kind, turn }
-      : { t: "relay", ok: false, reason: "relay unavailable" };
-    ws.send(JSON.stringify(reply));
+    return turn ? { ok: true, entitlement: entitlement.kind, turn } : { ok: false, reason: "relay unavailable" };
+  }
+
+  // App Attest (PRD R17). A node registers once with an attestation, then proves possession of the
+  // same key on every request with an assertion over `clientData` (see clientData() below).
+  private async attested(slot: Slot, relay: Relay): Promise<boolean> {
+    const opts = {
+      teamId: this.env.APP_ATTEST_TEAM_ID,
+      bundleId: this.env.APP_ATTEST_BUNDLE_ID,
+      rootsDer: anchors(this.env.APP_ATTEST_ROOT, this.env.APP_ATTEST_TEST_ROOT),
+    };
+    const key = `attest:${slot.nodeID}`;
+    let stored = await this.env.RELAY.get<Attested>(key, "json");
+    if (!stored) {
+      if (!relay.attestation) return false;
+      const keyId = base64(relay.keyId);
+      const fresh = await verifyAttestation(base64(relay.attestation), unhex(slot.nonce), keyId, opts);
+      if (!fresh) return false;
+      stored = { spki: b64(fresh.publicKeySpki), counter: 0 };
+    }
+    const data = clientData(relay.entitlement, slot.nonce);
+    const counter = await verifyAssertion(base64(relay.assertion), data, { ...opts, spki: base64(stored.spki), counter: stored.counter });
+    if (counter === null) return false;
+    await this.env.RELAY.put(key, JSON.stringify({ spki: stored.spki, counter } satisfies Attested));
+    return true;
   }
 
   private async forward(from: string, to: string, message: string): Promise<void> {
@@ -151,18 +198,35 @@ function parseAuth(message: string): Auth | null {
   return ok ? (auth as Auth) : null;
 }
 
-// Returns the carried JWS for a relay frame (empty when malformed), or null for anything else,
-// which stays opaque and gets forwarded.
-function parseRelay(message: string): string | null {
+// Returns a relay frame's fields (missing ones become empty strings, which fail their own check
+// further down), or null for anything else, which stays opaque and gets forwarded.
+function parseRelay(message: string): Relay | null {
   let value: unknown;
   try {
     value = JSON.parse(message);
   } catch {
     return null;
   }
-  const frame = value as { t?: unknown; entitlement?: unknown };
+  const frame = value as Record<string, unknown>;
   if (frame?.t !== "relay") return null;
-  return typeof frame.entitlement === "string" ? frame.entitlement : "";
+  const field = (name: keyof Relay) => (typeof frame[name] === "string" ? (frame[name] as string) : "");
+  return { entitlement: field("entitlement"), keyId: field("keyId"), attestation: field("attestation"), assertion: field("assertion") };
+}
+
+// The bytes the App Attest assertion signs over. Binding the entitlement JWS stops a stolen
+// assertion from being paired with someone else's subscription, and the room nonce — fresh per
+// socket — stops it from being replayed into a new connection. The iOS client must build exactly
+// these bytes as its clientData.
+function clientData(jws: string, roomNonce: string): Uint8Array {
+  return concat(new TextEncoder().encode(jws), unhex(roomNonce));
+}
+
+function anchors(...roots: (string | undefined)[]): Uint8Array[] {
+  return roots.filter((root): root is string => !!root).map(base64);
+}
+
+function b64(bytes: Uint8Array): string {
+  return btoa(String.fromCharCode(...bytes));
 }
 
 function hex(bytes: Uint8Array): string {
@@ -179,14 +243,4 @@ function base64(text: string): Uint8Array {
   } catch {
     return new Uint8Array();
   }
-}
-
-function concat(...parts: Uint8Array[]): Uint8Array {
-  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
-  let offset = 0;
-  for (const part of parts) {
-    out.set(part, offset);
-    offset += part.length;
-  }
-  return out;
 }

@@ -5,6 +5,8 @@
     "moduleResolution": "bundler",
     "strict": true,
     "noEmit": true,
+    // Relative imports carry their .ts extension so `node test/*.mjs` can load src/ directly.
+    "allowImportingTsExtensions": true,
     "lib": ["es2022"],
     "types": ["@cloudflare/workers-types"]
   },
