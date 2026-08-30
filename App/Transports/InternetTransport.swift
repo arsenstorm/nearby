@@ -16,6 +16,8 @@ final class InternetTransport: Transport, @unchecked Sendable {
     private static let keepaliveInterval: TimeInterval = 15
     private static let linkTimeout: TimeInterval = 45
     private static let retryDelay: TimeInterval = 30
+    // Every relay request spends a 10-minute grant of the node's allowance, so retries are paced.
+    private static let relayInterval: TimeInterval = 60
 
     private let continuation: AsyncStream<TransportEvent>.Continuation
     let queue = DispatchQueue(label: "nearby.transport.internet")
@@ -53,6 +55,7 @@ final class InternetTransport: Transport, @unchecked Sendable {
     private var theirs: [NodeID: [Candidate]] = [:]
     private var links: [LinkID: Link] = [:]
     var relays: [NodeID: TURNClient] = [:]
+    private var lastRelayAttempt: [NodeID: Date] = [:]
     /// A relay asked for but not yet answered; the reply needs the candidates the punch failed on.
     var pendingRelay: [NodeID: (jws: String, candidates: [Candidate], proof: RelayProof?)] = [:]
     private var keepaliveTimer: DispatchSourceTimer?
@@ -222,6 +225,8 @@ final class InternetTransport: Transport, @unchecked Sendable {
     /// PRD R7/R9: only after the direct window fails do we pay for a TURN allocation.
     private func startRelay(_ peer: NodeID, candidates: [Candidate]) {
         guard started, relays[peer] == nil, pendingRelay[peer] == nil, !hasLink(peer) else { return }
+        guard Date().timeIntervalSince(lastRelayAttempt[peer] ?? .distantPast) >= Self.relayInterval else { return }
+        lastRelayAttempt[peer] = Date()
         Task { [weak self, entitlement] in
             guard let jws = await entitlement() else { return }
             self?.queue.async { [weak self] in self?.requestRelay(peer, jws: jws, candidates: candidates) }
