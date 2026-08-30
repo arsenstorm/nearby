@@ -15,15 +15,13 @@ export interface BudgetEnv {
 
 const GRAPHQL = "https://api.cloudflare.com/client/v4/graphql";
 
-// UNCONFIRMED: `callsTurnUsageAdaptiveGroups` / `egressBytes` is our best reading of the Realtime
-// TURN dataset. Confirm the node and field names against the account's own schema before deploy —
-// https://developers.cloudflare.com/analytics/graphql-api/ (introspect, or use the GraphQL
-// explorer). A wrong name returns an `errors` array, which lands in the catch below and leaves the
-// kill switch untouched, so a bad guess fails open, not closed.
-const QUERY = `query Turn($account: String!, $start: Time!) {
+// Dataset and filters per https://developers.cloudflare.com/realtime/turn/analytics/ (the filter is
+// a date, not a datetime). A schema error lands in the catch below and leaves the kill switch
+// untouched, so a bad query fails open, not closed.
+const QUERY = `query Turn($account: String!, $start: Date!) {
   viewer {
     accounts(filter: { accountTag: $account }) {
-      callsTurnUsageAdaptiveGroups(limit: 10000, filter: { datetime_geq: $start }) {
+      callsTurnUsageAdaptiveGroups(limit: 10000, filter: { date_geq: $start }) {
         sum { egressBytes }
       }
     }
@@ -32,7 +30,7 @@ const QUERY = `query Turn($account: String!, $start: Time!) {
 
 export async function refreshBudget(env: BudgetEnv, now = Date.now()): Promise<number> {
   try {
-    const start = `${month(now)}-01T00:00:00Z`;
+    const start = `${month(now)}-01`;
     const response = await fetch(GRAPHQL, {
       method: "POST",
       headers: { Authorization: `Bearer ${env.CF_ANALYTICS_TOKEN}`, "Content-Type": "application/json" },
