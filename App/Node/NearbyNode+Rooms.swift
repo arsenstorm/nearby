@@ -143,7 +143,13 @@ extension NearbyNode {
         guard let room = joined else { return }
         let hostGone = !room.members.contains { $0.id == room.host }
             || !peers.contains { $0.id == room.host }
-        guard hostGone, nodeID == reachableMembers().map(\.id).min() else { return }
+        guard hostGone else { return hostMissingSince = nil }
+        // A relay or a Wi-Fi/cellular switch can hide the host for 10-20 s; only a longer absence is a real loss.
+        let missingSince = hostMissingSince ?? Date()
+        hostMissingSince = missingSince
+        guard Date().timeIntervalSince(missingSince) >= Self.takeoverGrace,
+              nodeID == reachableMembers().map(\.id).min() else { return }
+        hostMissingSince = nil
         let takeover = HostRoom(
             takingOver: room.id,
             name: room.name,

@@ -27,6 +27,8 @@ final class NearbyNode {
     var joined: JoinedRoom?
     var joinState: JoinState = .idle
     var keyWarning: PeerKeyWarning?
+    /// When the room host first went missing; takeover waits so an internet re-route does not split the room.
+    var hostMissingSince: Date?
     var transportStates: [TransportID: TransportState] = [:]
     var inCall = false
     var muted = false
@@ -47,6 +49,7 @@ final class NearbyNode {
 
     private static let displayNameKey = "displayName"
     static let peerTimeout: TimeInterval = 5
+    static let takeoverGrace: TimeInterval = 20
     static let roomTimeout: TimeInterval = 6
     static let rejoinKey = "room.rejoin"
 
