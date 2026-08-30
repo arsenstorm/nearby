@@ -19,14 +19,13 @@
   // npx wrangler secret put APP_ATTEST_ROOT`. Source (PEM, converted with `openssl x509 -outform DER`):
   // https://www.apple.com/certificateauthority/Apple_App_Attestation_Root_CA.pem
   // APP_ATTEST_TEST_ROOT is a test-only extra anchor and must stay unset here, like APPLE_TEST_ROOT.
-  // BUDGET_PAUSED_OVERRIDE is likewise test-only. APP_ATTEST_TEAM_ID is the Apple Developer team ID
-  // that signs the app; the App Attest relying-party ID is "<team>.<bundle>".
-  // CF_ANALYTICS_TOKEN is a secret: an API token with Account Analytics Read, delivered by
+  // BUDGET_PAUSED_OVERRIDE is likewise test-only.
+  // APP_ATTEST_TEAM_ID (the Apple Developer team ID; the relying-party ID is "<team>.<bundle>") and
+  // CF_ANALYTICS_TOKEN (an API token with Account Analytics Read) are secrets, delivered by
   // Infisical's Cloudflare Workers sync like TURN_API_TOKEN.
   "vars": {
     "APPLE_BUNDLE_ID": "com.arsenstorm.nearby",
     "APPLE_PRODUCT_ID": "com.arsenstorm.nearby.plus.monthly",
-    "APP_ATTEST_TEAM_ID": "TODO",
     "APP_ATTEST_BUNDLE_ID": "com.arsenstorm.nearby",
     "ALLOWANCE_MINUTES": "2400",
     "BUDGET_GB": "900",
