@@ -34,7 +34,7 @@
   // Per-node relay allowance, the App Attest key registry and the budget kill switch.
   // Create with `npx wrangler kv namespace create RELAY` (and `--preview` for the preview id), then
   // paste the ids here — the placeholders below only work for `wrangler dev --local`.
-  "kv_namespaces": [{ "binding": "RELAY", "id": "relay-local", "preview_id": "relay-local" }],
+  "kv_namespaces": [{ "binding": "RELAY", "id": "5609037babe44cd9a8ad918851bee785", "preview_id": "relay-local" }],
   // Hourly budget refresh; see scheduled() in src/index.ts.
   "triggers": { "crons": ["0 * * * *"] },
   "durable_objects": { "bindings": [{ "name": "PAIR", "class_name": "PairRoom" }] },
