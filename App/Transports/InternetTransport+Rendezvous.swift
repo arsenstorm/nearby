@@ -73,7 +73,7 @@ extension InternetTransport {
         else { return logger.error("bad offer from \(peer.description, privacy: .public)") }
         let candidates = ((json["candidates"] as? [String]) ?? []).compactMap(Candidate.init(text:))
         guard !candidates.isEmpty else { return }
-        logger.notice("offer from \(peer.description, privacy: .public), \(candidates.count) candidates")
+        logger.notice("offer from \(peer.description, privacy: .public): \(candidates.map(\.text).joined(separator: " "), privacy: .public)")
         startPunch(peer, candidates: candidates)
     }
 

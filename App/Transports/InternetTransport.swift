@@ -279,14 +279,21 @@ final class InternetTransport: Transport, @unchecked Sendable {
     private func deliver(_ data: Data, host: String, port: UInt16, relay: NodeID?) {
         let endpoint = relay == nil ? "\(host):\(port)" : "relay:\(host):\(port)"
         let link = LinkID(transport: id, endpoint: endpoint)
-        if data == Self.punch { sendRaw(Self.ack, host: host, port: port, relay: relay) }
-        guard data != Self.punch, data != Self.ack else { return receivedPunch(link, host: host, port: port) }
+        // A punch only proves the inbound direction, so it is answered but never brings a link up;
+        // the ack that comes back proves the round trip and does.
+        if data == Self.punch { return answerPunch(link, host: host, port: port, relay: relay) }
+        if data == Self.ack { return receivedAck(link, host: host, port: port) }
         guard links[link] != nil else { return }
         links[link]?.lastHeard = Date()
         continuation.yield(.received(data, link))
     }
 
-    private func receivedPunch(_ link: LinkID, host: String, port: UInt16) {
+    private func answerPunch(_ link: LinkID, host: String, port: UInt16, relay: NodeID?) {
+        sendRaw(Self.ack, host: host, port: port, relay: relay)
+        links[link]?.lastHeard = Date()
+    }
+
+    private func receivedAck(_ link: LinkID, host: String, port: UInt16) {
         guard links[link] == nil else {
             links[link]?.lastHeard = Date()
             return
