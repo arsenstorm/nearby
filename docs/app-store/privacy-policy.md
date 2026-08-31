@@ -27,13 +27,13 @@ addresses.
 ## What we store
 
 Your app creates a random node ID. The node ID is not tied to your name,
-email or Apple ID. For internet calls, our server stores two things under
-your node ID:
+email or Apple ID. For internet calls, our server stores two things:
 
-- **Relay minutes used this calendar month**, to enforce the monthly relay
-  allowance. This record is deleted after about 40 days.
-- **A device attestation key** (Apple App Attest), to keep fraudulent
-  clients off the relay.
+- **Relay minutes used this calendar month**, counted against your
+  subscription so the monthly allowance cannot be multiplied across devices.
+  This record is deleted after about 40 days.
+- **A device attestation key** (Apple App Attest), stored under your node ID
+  to keep fraudulent clients off the relay.
 
 We store nothing else: no names, no contacts, no audio, no call history and
 no IP addresses. There are no analytics, no advertising identifiers and no

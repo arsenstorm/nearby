@@ -31,19 +31,21 @@
 
 ## Privacy nutrition label (App Privacy section)
 
-Answer **"Yes, we collect data"**. The relay server stores two records per
-node ID: relay minutes used per calendar month, and an App Attest public key.
-Voice, names, friends and call history never reach us. Declare:
+Answer **"Yes, we collect data"**. The relay server stores two records: relay
+minutes used per calendar month, counted against the subscription, and an App
+Attest public key stored under the node ID. Voice, names, friends and call
+history never reach us. Declare:
 
 | Data type | Category | Linked to user | Tracking | Purpose |
 |---|---|---|---|---|
 | User ID (the node ID) | Identifiers | Yes | No | App Functionality |
 | Product Interaction (relay minutes) | Usage Data | Yes | No | App Functionality |
 
-"Linked to user" is Yes because both records are keyed by the node ID, a
-persistent identifier. Nothing is used for tracking and there are no
-third-party analytics or ads. `App/PrivacyInfo.xcprivacy` declares the same
-two types and must stay in sync with this label.
+"Linked to user" is Yes because each record is keyed by a persistent
+identifier: the App Attest key by the node ID, and the relay minutes by the
+subscription. Nothing is used for tracking and there are no third-party
+analytics or ads. `App/PrivacyInfo.xcprivacy` declares the same two types and
+must stay in sync with this label.
 
 ## Permissions the reviewer will see
 

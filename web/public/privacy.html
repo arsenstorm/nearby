@@ -18,10 +18,10 @@
 <p>You can call a friend who is not nearby. These calls use our server (a Cloudflare Worker) so the two phones can find each other. When no direct path exists between the phones, the call goes through a relay on Cloudflare. The relay needs the Nearby subscription.</p>
 <p>Voice on internet calls stays end‑to‑end encrypted. The server and the relay forward encrypted packets. They cannot read or hear them. Like any internet service, they see your IP address while you are connected. We do not store IP addresses.</p>
 <h2>What we store</h2>
-<p>Your app creates a random node ID. The node ID is not tied to your name, email or Apple ID. For internet calls, our server stores two things under your node ID:</p>
+<p>Your app creates a random node ID. The node ID is not tied to your name, email or Apple ID. For internet calls, our server stores two things:</p>
 <ul>
-<li><strong>Relay minutes used this calendar month</strong>, to enforce the monthly relay allowance. This record is deleted after about 40 days.</li>
-<li><strong>A device attestation key</strong> (Apple App Attest), to keep fraudulent clients off the relay.</li>
+<li><strong>Relay minutes used this calendar month</strong>, counted against your subscription so the monthly allowance cannot be multiplied across devices. This record is deleted after about 40 days.</li>
+<li><strong>A device attestation key</strong> (Apple App Attest), stored under your node ID to keep fraudulent clients off the relay.</li>
 </ul>
 <p>We store nothing else: no names, no contacts, no audio, no call history and no IP addresses. There are no analytics, no advertising identifiers and no ads.</p>
 <h2>Subscription</h2>
