@@ -2,10 +2,10 @@ name: Web
 
 on:
   pull_request:
-    paths: [web/**, .github/workflows/web.yml]
+    paths: [apps/api/**, apps/web/**, .github/workflows/web.yml]
   push:
     branches: [main]
-    paths: [web/**, .github/workflows/web.yml]
+    paths: [apps/api/**, apps/web/**, .github/workflows/web.yml]
 
 permissions:
   contents: read
@@ -21,14 +21,14 @@ jobs:
     timeout-minutes: 15
     defaults:
       run:
-        working-directory: web
+        working-directory: apps/api
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: web/package-lock.json
+          cache-dependency-path: apps/api/package-lock.json
       - run: npm ci
       - run: npm run check
       # Spawns `wrangler dev --local` and openssl; both are on the runner.
@@ -43,14 +43,14 @@ jobs:
     environment: production
     defaults:
       run:
-        working-directory: web
+        working-directory: apps/api
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: web/package-lock.json
+          cache-dependency-path: apps/api/package-lock.json
       - run: npm ci
       # Secrets (TURN, Apple roots, team id, analytics token) are synced by Infisical, not set here.
       - run: npx wrangler deploy

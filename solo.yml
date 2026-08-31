@@ -1,11 +1,11 @@
 name: Nearby
 processes:
   Install on phone:
-    command: scripts/run-device.sh
+    command: apps/ios/scripts/run-device.sh
     auto_start: false
   Install on simulator:
-    command: scripts/run-sim.sh
+    command: apps/ios/scripts/run-sim.sh
     auto_start: false
   Install on phone + simulator:
-    command: scripts/run-all.sh
+    command: apps/ios/scripts/run-all.sh
     auto_start: false

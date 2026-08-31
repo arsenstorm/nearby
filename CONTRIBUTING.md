@@ -7,18 +7,20 @@ Thanks for your interest in improving Nearby.
 You'll need Xcode 26 with the iOS 26 platform installed.
 
 ```sh
+cd apps/ios
 swift test            # NearbyCore package tests
 scripts/run-sim.sh    # build and launch the app on a simulator
 ```
 
 Anything involving discovery, audio or Bluetooth needs at least one physical
-iPhone: `scripts/run-device.sh`.
+iPhone: `apps/ios/scripts/run-device.sh`.
 
 ## Before opening a pull request
 
 Run the same checks CI runs:
 
 ```sh
+cd apps/ios
 swift test
 xcodebuild build -project Nearby.xcodeproj -scheme Nearby \
   -destination "generic/platform=iOS Simulator" CODE_SIGNING_ALLOWED=NO -quiet

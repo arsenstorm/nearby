@@ -5,7 +5,7 @@
   "compatibility_date": "2026-07-07",
   "main": "src/index.ts",
   // Static pages plus the /pair/<hash> rendezvous Durable Object; see src/pair.ts.
-  "assets": { "directory": "./public", "binding": "ASSETS", "html_handling": "auto-trailing-slash", "not_found_handling": "404-page" },
+  "assets": { "directory": "../web/public", "binding": "ASSETS", "html_handling": "auto-trailing-slash", "not_found_handling": "404-page" },
   "routes": [{ "pattern": "nearby.arsenstorm.com", "custom_domain": true }],
   // APPLE_ROOT_CA_G3 is the base64 of certs/AppleRootCA-G3.cer (DER), set with
   //   `base64 -i certs/AppleRootCA-G3.cer | tr -d '\n' | npx wrangler secret put APPLE_ROOT_CA_G3`.

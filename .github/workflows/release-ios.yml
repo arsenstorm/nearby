@@ -76,6 +76,7 @@ jobs:
       # Automatic signing dev-signs the archive (export re-signs for the store)
       # using the imported dev cert rather than minting one per run.
       - name: Archive
+        working-directory: apps/ios
         run: |
           xcodebuild archive \
             -project Nearby.xcodeproj \
@@ -108,6 +109,7 @@ jobs:
           api-private-key: ${{ secrets.ASC_PRIVATE_KEY }}
 
       - name: Upload to App Store Connect
+        working-directory: apps/ios
         run: |
           xcodebuild -exportArchive \
             -archivePath "$RUNNER_TEMP/Nearby.xcarchive" \

@@ -1,6 +1,6 @@
 .DS_Store
 .build/
-web/.wrangler/
+apps/api/.wrangler/
 .swiftpm/
 xcuserdata/
 *.xcuserstate
@@ -14,5 +14,5 @@ build/
 *.mobileprovision
 .env
 !.env.example
-web/node_modules/
-web/.dev.vars
+apps/api/node_modules/
+apps/api/.dev.vars

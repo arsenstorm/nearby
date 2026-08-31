@@ -11,7 +11,7 @@
 <!-- How did you verify this? -->
 
 - [ ] `swift test`
-- [ ] `scripts/run-sim.sh` builds and launches
+- [ ] `apps/ios/scripts/run-sim.sh` builds and launches
 - [ ] Verified on a physical device where discovery, audio or Bluetooth is involved
 
 ## Notes

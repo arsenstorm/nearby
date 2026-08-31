@@ -22,14 +22,14 @@
    Connect API → generate a key with the **App Manager** role (not Admin). Store
    `ASC_KEY_ID`, `ASC_ISSUER_ID`, and the `.p8` contents as `ASC_PRIVATE_KEY` in
    GitHub secrets; keep the `.p8` locally (e.g. `~/.appstoreconnect/`) for
-   `scripts/deploy.sh`.
+   `apps/ios/scripts/deploy.sh`.
 6. **Test the pipeline** with Actions → Release iOS → Run workflow before
    cutting a real release.
 
 ## Shipping a build
 
 - Tag and publish a GitHub release `vX.Y` → TestFlight build appears in ~15 min.
-- Or locally: `ASC_KEY_ID=… ASC_ISSUER_ID=… ASC_KEY_PATH=… VERSION=X.Y scripts/deploy.sh`.
+- Or locally: `ASC_KEY_ID=… ASC_ISSUER_ID=… ASC_KEY_PATH=… VERSION=X.Y apps/ios/scripts/deploy.sh`.
 
 ## Privacy nutrition label (App Privacy section)
 
@@ -63,7 +63,7 @@ while in a room.
 
 ## URLs
 
-- **Privacy Policy URL:** https://nearby.arsenstorm.com/privacy (served from `web/`, deploy with `cd web && bunx wrangler deploy`)
+- **Privacy Policy URL:** https://nearby.arsenstorm.com/privacy (served from `apps/web/`, deploy with `cd apps/api && bunx wrangler deploy`)
 - **Support URL:** https://nearby.arsenstorm.com/support
 
 ## Export compliance
