@@ -15,6 +15,18 @@ extension NearbyNode {
         }
     }
 
+    /// A peer's name, learned sealed (the Hello no longer carries it). Persisted so the name survives
+    /// a relaunch before the next profile arrives.
+    func receiveProfile(name: String, from source: NodeID) {
+        guard !name.isEmpty, !blocked.contains(source) else { return }
+        guard peerStore.record(for: source)?.name != name else { return }
+        peerStore.rename(source, to: name)
+        PeerStoreFile.save(peerStore)
+        if let peer = peers.first(where: { $0.id == source }) {
+            upsertPeer(id: source, name: name, lastSeen: peer.lastSeen)
+        }
+    }
+
     func upsertPeer(id: NodeID, name: String, lastSeen: Date) {
         let links = displayLinks(for: id)
         if let index = peers.firstIndex(where: { $0.id == id }) {

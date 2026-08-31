@@ -33,6 +33,17 @@ import Testing
     @Test func leaveRoundTrips() throws {
         try roundTrip(.leave(roomID: 1))
     }
+
+    @Test func profileRoundTrips() throws {
+        try roundTrip(.profile(name: "Ada"))
+    }
+
+    @Test func onlyRoomAnnounceIsBroadcastable() {
+        #expect(ControlMessage.roomAnnounce(RoomAnnounce(roomID: 1, name: "r", host: NodeID(raw: 1), hasCode: false)).isBroadcastable)
+        #expect(!ControlMessage.profile(name: "Ada").isBroadcastable)
+        #expect(!ControlMessage.memberList(roomID: 1, members: [], roomKey: Data(count: 32)).isBroadcastable)
+        #expect(!ControlMessage.leave(roomID: 1).isBroadcastable)
+    }
 }
 
 @Suite struct HostRoomTests {

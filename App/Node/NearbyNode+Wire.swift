@@ -62,7 +62,9 @@ extension NearbyNode {
             stream: 0, sequence: nextSequence()
         )
         let timestampMs = UInt64(Date().timeIntervalSince1970 * 1000)
-        guard let hello = try? Hello(identity: identity, name: displayName, timestampMs: timestampMs),
+        // The Hello is a plaintext broadcast, so it carries no name; the name goes out sealed in a
+        // profile message once a pairwise session exists (see receiveHello).
+        guard let hello = try? Hello(identity: identity, name: "", timestampMs: timestampMs),
               let payload = try? hello.encode()
         else {
             logger.error("failed to build hello")
@@ -239,6 +241,11 @@ extension NearbyNode {
             if unbound { advertiseLinkState() }
         }
         if sessions[hello.nodeID]?.remoteEphemeralPublicKey != hello.ephemeralPublicKey { makeSession(for: hello) }
+        // Tell a directly-linked peer our name over the sealed session. Repeats each direct Hello so
+        // a copy dropped before both sessions existed is retried; the name never rides the Hello.
+        if direct, sessions[hello.nodeID] != nil {
+            sendControl(.profile(name: displayName), to: hello.nodeID)
+        }
         upsertPeer(id: record.id, name: record.name, lastSeen: now)
         if before != record {
             PeerStoreFile.save(peerStore)

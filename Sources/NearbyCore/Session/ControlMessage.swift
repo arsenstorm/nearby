@@ -81,6 +81,8 @@ public enum ControlMessage: Codable, Sendable, Equatable {
     case joinReject(roomID: RoomID, reason: String)
     case memberList(roomID: RoomID, members: [Member], roomKey: Data)
     case leave(roomID: RoomID)
+    /// A peer's display name, exchanged sealed so it never rides the plaintext Hello broadcast.
+    case profile(name: String)
 
     /// Only roomAnnounce may travel as a plaintext broadcast; it self-authenticates with the host's
     /// signature. Every other message must arrive sealed over a pairwise session, so the receiver

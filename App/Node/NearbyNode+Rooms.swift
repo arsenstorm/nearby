@@ -19,6 +19,8 @@ extension NearbyNode {
             receiveMemberList(roomID: roomID, members: members, roomKey: roomKey, from: source)
         case .leave(let roomID):
             receiveLeave(roomID: roomID, from: source)
+        case .profile(let name):
+            receiveProfile(name: name, from: source)
         }
     }
 

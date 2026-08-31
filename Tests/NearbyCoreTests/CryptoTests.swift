@@ -92,6 +92,25 @@ import Testing
         #expect(store.records.count == 1)
     }
 
+    @Test func emptyHelloNamePreservesStoredName() throws {
+        var store = PeerStore()
+        let identity = Identity()
+        _ = try store.observe(try Hello(identity: identity, name: "alice", timestampMs: 1), now: .now)
+        let record = try store.observe(try Hello(identity: identity, name: "", timestampMs: 2), now: .now)
+        #expect(record.name == "alice")
+    }
+
+    @Test func renameAppliesSealedProfileName() throws {
+        var store = PeerStore()
+        let identity = Identity()
+        _ = try store.observe(try Hello(identity: identity, name: "", timestampMs: 1), now: .now)
+        store.rename(identity.nodeID, to: "Ada")
+        #expect(store.record(for: identity.nodeID)?.name == "Ada")
+        // Renaming an unknown peer is a no-op.
+        store.rename(Identity().nodeID, to: "Nobody")
+        #expect(store.records.count == 1)
+    }
+
     @Test func helloWithForeignNodeIDFailsVerifyAndObserve() throws {
         var store = PeerStore()
         let a = Identity()

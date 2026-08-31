@@ -35,7 +35,9 @@ public struct PeerStore: Sendable {
                 throw PeerStoreError.keyChanged(existing: existing)
             }
             var updated = existing
-            updated.name = hello.name
+            // The name now arrives sealed via a profile message; the Hello carries an empty name, so
+            // an empty one never overwrites a name we already learned.
+            if !hello.name.isEmpty { updated.name = hello.name }
             records[hello.nodeID] = updated
             return updated
         }
@@ -69,6 +71,13 @@ public struct PeerStore: Sendable {
         let record = PeerRecord(id: card.nodeID, signingPublicKey: card.signingPublicKey, name: card.name, firstSeen: now)
         records[card.nodeID] = record
         return record
+    }
+
+    /// Applies a name learned from a sealed profile message; no-op for an unknown peer.
+    public mutating func rename(_ id: NodeID, to name: String) {
+        guard var record = records[id] else { return }
+        record.name = name
+        records[id] = record
     }
 
     public mutating func remove(_ id: NodeID) {
