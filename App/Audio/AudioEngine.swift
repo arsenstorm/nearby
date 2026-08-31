@@ -14,16 +14,16 @@ final class AudioEngine: @unchecked Sendable {
     private final class Stream: @unchecked Sendable {
         var jitter: JitterBuffer
         let decoder: OpusDecoder
-        let internet: Bool
+        let wide: Bool
         var pcm = [Float](repeating: 0, count: Opus.internetFrameSamples)
         /// Samples the last decode produced; the codec's pre-skip makes the first one short.
         var validCount = 0
         var readIndex = 0
 
-        init(jitter: JitterBuffer, decoder: OpusDecoder, internet: Bool) {
+        init(jitter: JitterBuffer, decoder: OpusDecoder, wide: Bool) {
             self.jitter = jitter
             self.decoder = decoder
-            self.internet = internet
+            self.wide = wide
         }
 
         func mix(into out: UnsafeMutablePointer<Float>, count: Int) {
@@ -117,7 +117,7 @@ final class AudioEngine: @unchecked Sendable {
         set {
             shared.withLock {
                 $0.targetDepth = newValue
-                for stream in $0.streams.values where !stream.internet { stream.jitter.targetDepth = newValue }
+                for stream in $0.streams.values where !stream.wide { stream.jitter.targetDepth = newValue }
             }
         }
     }
@@ -137,13 +137,13 @@ final class AudioEngine: @unchecked Sendable {
         set { shared.withLock { $0.noiseReduction = newValue } }
     }
 
-    /// Frames of 20 ms. Internet paths jitter more than local ones, so they buffer deeper.
+    /// Frames of 20 ms, for wide streams (internet and BLE): both jitter more than LAN, so they buffer deeper.
     var internetJitterTargetDepth: Int {
         get { shared.withLock { $0.internetTargetDepth } }
         set {
             shared.withLock {
                 $0.internetTargetDepth = newValue
-                for stream in $0.streams.values where stream.internet { stream.jitter.targetDepth = newValue }
+                for stream in $0.streams.values where stream.wide { stream.jitter.targetDepth = newValue }
             }
         }
     }
@@ -241,16 +241,16 @@ final class AudioEngine: @unchecked Sendable {
         shared.withLock { $0.running = false }
     }
 
-    /// Idempotent while the peer's link class holds; a switch between local and internet rebuilds the
+    /// Idempotent while the peer's link class holds; a switch between narrow and wide rebuilds the
     /// stream, because a decoder is bound to one frame size.
-    func addStream(_ peer: NodeID, internet: Bool) {
+    func addStream(_ peer: NodeID, wide: Bool) {
         shared.withLock {
-            guard $0.streams[peer]?.internet != internet else { return }
-            let frameMs = internet ? Opus.internetFrameMs : Opus.frameMs
+            guard $0.streams[peer]?.wide != wide else { return }
+            let frameMs = wide ? Opus.internetFrameMs : Opus.frameMs
             guard let decoder = try? OpusDecoder(frameMs: frameMs) else { return }
-            let depth = internet ? $0.internetTargetDepth : $0.targetDepth
+            let depth = wide ? $0.internetTargetDepth : $0.targetDepth
             $0.streams[peer] = Stream(
-                jitter: JitterBuffer(targetDepth: depth), decoder: decoder, internet: internet)
+                jitter: JitterBuffer(targetDepth: depth), decoder: decoder, wide: wide)
         }
     }
 

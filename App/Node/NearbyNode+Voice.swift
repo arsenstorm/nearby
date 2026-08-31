@@ -72,18 +72,20 @@ extension NearbyNode {
     /// Runs on every path refresh too: addStream only rebuilds when a peer's link class changed.
     func syncStreams() {
         let wanted = Set(currentMembers.map(\.id)).subtracting([nodeID])
-        for id in wanted { audio?.addStream(id, internet: reachedOverInternet(id)) }
+        for id in wanted { audio?.addStream(id, wide: usesWideFrames(mesh.nextLink(to: id)?.transport)) }
         for id in streamPeers.subtracting(wanted) { audio?.removeStream(id) }
         streamPeers = wanted
     }
 
-    private func reachedOverInternet(_ member: NodeID) -> Bool {
-        mesh.nextLink(to: member)?.transport == .internet
+    /// Internet paths jitter through relays; BLE delivers in bursts at the connection interval.
+    /// Both get 20 ms frames and the deeper buffer. LAN and AWDL carry 10 ms frames.
+    private func usesWideFrames(_ transport: TransportID?) -> Bool {
+        transport == .internet || transport == .ble
     }
 
-    /// Internet links carry 20 ms frames, local links 10 ms, so each member gets exactly one copy.
+    /// Wide-frame links carry 20 ms packets, local links 10 ms, so each member gets exactly one copy.
     private func carries(_ link: LinkID, _ frame: VoiceFrame) -> Bool {
-        (link.transport == .internet) == (frame.durationMs == Opus.internetFrameMs)
+        usesWideFrames(link.transport) == (frame.durationMs == Opus.internetFrameMs)
     }
 
     private func nextVoiceSequence(for member: NodeID) -> UInt32 {
