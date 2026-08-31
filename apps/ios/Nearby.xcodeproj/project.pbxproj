@@ -286,6 +286,13 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-weak_framework",
+					DeviceDiscoveryUI,
+					"-weak_framework",
+					"_DeviceDiscoveryUI_SwiftUI",
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.arsenstorm.nearby;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -312,6 +319,13 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-weak_framework",
+					DeviceDiscoveryUI,
+					"-weak_framework",
+					"_DeviceDiscoveryUI_SwiftUI",
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.arsenstorm.nearby;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
