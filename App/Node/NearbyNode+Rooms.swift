@@ -37,24 +37,34 @@ extension NearbyNode {
         requestJoin(announce)
     }
 
-    /// A room member announcing itself as host, with proof it holds the room key.
-    private func verifiedHostClaim(_ announce: RoomAnnounce, by source: NodeID, members: [Member], roomKey: Data) -> Bool {
-        announce.host == source
-            && announce.verifyProof(roomKey: roomKey)
-            && members.contains { $0.id == source }
+    /// A room member announcing itself as host, its identity signature verified against the signing
+    /// key we recorded from its Hello. Every member holds the room key, so key possession no longer
+    /// proves who the host is; only the signature does.
+    private func verifiedHostClaim(_ announce: RoomAnnounce, by source: NodeID, members: [Member]) -> Bool {
+        guard announce.host == source, members.contains(where: { $0.id == source }),
+              let key = peerStore.record(for: source)?.signingPublicKey
+        else { return false }
+        return announce.verify(signingPublicKey: key)
     }
 
     private func followNewHost(_ announce: RoomAnnounce, from source: NodeID) {
         guard var room = joined, room.id == announce.roomID, room.host != source else { return }
-        guard verifiedHostClaim(announce, by: source, members: room.members, roomKey: room.roomKey) else { return }
+        guard verifiedHostClaim(announce, by: source, members: room.members) else { return }
+        // A signed announce proves who sent it, not that a takeover was due. Only follow when the
+        // prior host is gone from our view and `source` is the lowest reachable member — the same
+        // election evaluateHost runs — so a member cannot seize the host role while the real host
+        // is present and reachable.
+        let hostGone = !room.members.contains { $0.id == room.host } || !peers.contains { $0.id == room.host }
+        guard hostGone, source == reachableMembers().map(\.id).min() else { return }
         room.host = source
         joined = room
         logger.notice("host of room \(room.id) is now \(source.description, privacy: .public)")
     }
 
     private func yieldHostingIfOutranked(_ announce: RoomAnnounce, from source: NodeID) {
-        guard let room = hosted, room.id == announce.roomID, source < nodeID else { return }
-        guard verifiedHostClaim(announce, by: source, members: room.members, roomKey: room.roomKey) else { return }
+        guard let room = hosted, room.id == announce.roomID, source < nodeID,
+              peers.contains(where: { $0.id == source }) else { return }
+        guard verifiedHostClaim(announce, by: source, members: room.members) else { return }
         joined = JoinedRoom(
             id: room.id,
             name: room.name,
@@ -161,13 +171,13 @@ extension NearbyNode {
         joined = nil
         syncRoomKey()
         syncStreams()
-        broadcastControl(.roomAnnounce(takeover.announce))
+        broadcastControl(.roomAnnounce(takeover.announce.signed(by: identity)))
         logger.notice("took over room \(takeover.id)")
     }
 
     func announceHostedRoom() {
         guard let hosted else { return }
-        broadcastControl(.roomAnnounce(hosted.announce))
+        broadcastControl(.roomAnnounce(hosted.announce.signed(by: identity)))
     }
 
     func hostRoom(name: String) {

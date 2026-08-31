@@ -28,9 +28,9 @@ public struct HostRoom: Sendable {
         self.roomKey = roomKey
     }
 
+    /// Unsigned: the node broadcasting it signs with its identity key, which HostRoom does not hold.
     public var announce: RoomAnnounce {
-        RoomAnnounce(roomID: id, name: name, host: host.id, hasCode: false,
-                     proof: RoomAnnounce.proof(roomID: id, host: host.id, roomKey: roomKey))
+        RoomAnnounce(roomID: id, name: name, host: host.id, hasCode: false)
     }
 
     public mutating func request(from member: Member) {

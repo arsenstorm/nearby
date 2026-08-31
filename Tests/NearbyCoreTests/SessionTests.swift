@@ -120,12 +120,17 @@ import Testing
         #expect(room.announce.host == host.id)
     }
 
-    @Test func announceProofNeedsTheRoomKey() {
-        let room = HostRoom(id: 5, name: "r", host: Member(id: NodeID(raw: 1), name: "a"))
-        #expect(room.announce.verifyProof(roomKey: room.roomKey))
-        #expect(!room.announce.verifyProof(roomKey: Data(repeating: 0, count: 32)))
-        var forged = room.announce
+    @Test func announceSignatureBindsToHostIdentity() {
+        let identity = Identity()
+        let room = HostRoom(id: 5, name: "r", host: Member(id: identity.nodeID, name: "a"))
+        let signed = room.announce.signed(by: identity)
+        #expect(signed.verify(signingPublicKey: identity.signingPublicKey))
+        // Unsigned, or checked against another node's key, it is rejected.
+        #expect(!room.announce.verify(signingPublicKey: identity.signingPublicKey))
+        #expect(!signed.verify(signingPublicKey: Identity().signingPublicKey))
+        // Tampering with a signed field breaks the signature.
+        var forged = signed
         forged.host = NodeID(raw: 2)
-        #expect(!forged.verifyProof(roomKey: room.roomKey))
+        #expect(!forged.verify(signingPublicKey: identity.signingPublicKey))
     }
 }

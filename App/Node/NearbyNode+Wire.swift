@@ -249,8 +249,10 @@ extension NearbyNode {
     private func receiveControl(_ packet: Packet) {
         let header = packet.header
         let plaintext: Data
+        let sealed: Bool
         if header.destination == .broadcast {
             plaintext = packet.payload
+            sealed = false
         } else {
             guard let session = sessions[header.source],
                   let opened = try? session.open(packet.payload, header: header)
@@ -259,8 +261,15 @@ extension NearbyNode {
                 return
             }
             plaintext = opened
+            sealed = true
         }
         guard let message = try? ControlMessage.decode(plaintext) else { return }
+        // A plaintext broadcast carries no proof of its sender, so only a self-authenticating
+        // roomAnnounce is allowed there; membership and key changes must come sealed.
+        guard sealed || message.isBroadcastable else {
+            logger.error("dropping unsealed broadcast control from \(header.source.description, privacy: .public)")
+            return
+        }
         handle(message, from: header.source)
     }
 }
