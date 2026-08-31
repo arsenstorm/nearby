@@ -11,8 +11,11 @@
     "test": "node test/apple.mjs && node test/attest.mjs && node test/pair.mjs"
   },
   "devDependencies": {
-    "wrangler": "^4",
     "@cloudflare/workers-types": "^5",
-    "typescript": "^5"
+    "typescript": "^5",
+    "wrangler": "^4"
+  },
+  "dependencies": {
+    "hono": "^4.13.5"
   }
 }
