@@ -9,7 +9,9 @@ extension NearbyNode {
         return inCall && !others.isEmpty && !others.contains { member in peers.contains { $0.id == member.id } }
     }
 
-    var currentMembers: [Member] { hosted?.members ?? joined?.members ?? [] }
+    /// Blocked peers are dropped from the call: we send them no voice, play none of theirs, and open
+    /// no stream for them, on every delivery path including mesh relay from other members.
+    var currentMembers: [Member] { (hosted?.members ?? joined?.members ?? []).filter { !blocked.contains($0.id) } }
 
     /// Headline for the current call, shared by the main screen and the Live Activity.
     var callTitle: String {
