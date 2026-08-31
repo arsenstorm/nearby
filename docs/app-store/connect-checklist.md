@@ -11,7 +11,9 @@
 3. **Distribution certificate.** Xcode → Settings → Accounts → Manage
    Certificates → "+" → Apple Distribution. Export it as a `.p12` from Keychain
    Access; `base64 -i dist.p12 | pbcopy` → GitHub secret `DIST_CERT_P12`, its
-   password → `DIST_CERT_P12_PASSWORD`.
+   password → `DIST_CERT_P12_PASSWORD`. Do the same for the Apple Development
+   certificate → `DEV_CERT_P12` / `DEV_CERT_P12_PASSWORD` — without it the CI
+   runner mints a new "Created via API" dev cert on every archive.
 4. **Provisioning profiles.** Two App Store profiles, named exactly as
    `Config/ExportOptions.plist` expects:
    - `Nearby App Store` → `com.arsenstorm.nearby`
