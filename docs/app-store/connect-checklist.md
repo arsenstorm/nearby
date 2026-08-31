@@ -31,9 +31,19 @@
 
 ## Privacy nutrition label (App Privacy section)
 
-**"Data Not Collected."** Nearby has no server, no account and no analytics.
-Voice and names travel directly between phones, end-to-end encrypted, and
-nothing leaves the devices otherwise. Answer "No, we do not collect data".
+Answer **"Yes, we collect data"**. The relay server stores two records per
+node ID: relay minutes used per calendar month, and an App Attest public key.
+Voice, names, friends and call history never reach us. Declare:
+
+| Data type | Category | Linked to user | Tracking | Purpose |
+|---|---|---|---|---|
+| User ID (the node ID) | Identifiers | Yes | No | App Functionality |
+| Product Interaction (relay minutes) | Usage Data | Yes | No | App Functionality |
+
+"Linked to user" is Yes because both records are keyed by the node ID, a
+persistent identifier. Nothing is used for tracking and there are no
+third-party analytics or ads. `App/PrivacyInfo.xcprivacy` declares the same
+two types and must stay in sync with this label.
 
 ## Permissions the reviewer will see
 

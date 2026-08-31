@@ -5,10 +5,12 @@ Information → Notes**. Plain text, no markdown.
 
 -----
 
-Nearby is a walkie-talkie style voice room between iPhones that are physically
-near each other. There is no server, no account and no sign-in: phones find each
+Nearby is a walkie-talkie style voice room between iPhones. There is no
+account and no sign-in. Phones that are physically near each other find each
 other over the local network (Bonjour), Wi-Fi Aware or Bluetooth and talk
-directly.
+directly, with no server. Friends who exchanged friend codes can also call
+over the internet; those calls connect through our rendezvous server and,
+when no direct path exists, an encrypted relay that needs the subscription.
 
 Review requires TWO iPhones running this build, on the same Wi-Fi or with
 Bluetooth on.
@@ -30,7 +32,11 @@ Background audio: the "audio" background mode keeps the call running while
 the app is in the background, exactly like a phone call. Bluetooth background
 modes keep the peer link alive on phones with no shared Wi-Fi.
 
-Data: nothing is collected. Voice and display names are sent only to the other
-phones in the room, end-to-end encrypted (CryptoKit), and never to a server.
+Data: voice and display names are sent only to the phones in the room,
+end-to-end encrypted (CryptoKit). Nearby calls use no server. Internet calls
+pass encrypted packets through our server; it cannot read them. The server
+stores only two records per anonymous node ID: relayed minutes for the
+current month and an App Attest key. This matches the App Privacy answers
+(Identifiers, Usage Data) and the privacy policy.
 
 -----

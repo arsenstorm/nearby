@@ -1,7 +1,9 @@
 # Nearby
 
 Voice rooms between iPhones that are physically close — over the local
-network, Wi‑Fi Aware or Bluetooth, with no server and no account.
+network, Wi‑Fi Aware or Bluetooth, with no account. Nearby calls use no
+server; calls to far-away friends connect through a small rendezvous Worker
+and, with a subscription, an encrypted relay.
 
 ## Layout
 

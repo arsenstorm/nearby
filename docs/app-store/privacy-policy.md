@@ -1,27 +1,56 @@
 # Privacy Policy for Nearby
 
-**Last updated:** August 25, 2026
+**Last updated:** August 31, 2026
 
-Nearby lets iPhones that are physically close talk to each other in a voice
-room. It has no server and no account.
+Nearby lets iPhones talk in an encrypted voice room. Calls between phones that
+are physically close use no server. Calls to friends over the internet use our
+server to connect the phones. This policy covers both.
 
-## What we collect
+## Calls between nearby phones
 
-Nothing. Nearby does not collect, store or transmit any data to us or to
-anyone else. There are no analytics, no advertising identifiers and no
-third-party SDKs.
+Phones that are close find each other over the local network, Wi‑Fi Aware or
+Bluetooth. Voice and names travel directly between the phones, end‑to‑end
+encrypted. No server is involved. We receive nothing.
+
+## Calls over the internet
+
+You can call a friend who is not nearby. These calls use our server (a
+Cloudflare Worker) so the two phones can find each other. When no direct path
+exists between the phones, the call goes through a relay on Cloudflare. The
+relay needs the Nearby subscription.
+
+Voice on internet calls stays end‑to‑end encrypted. The server and the relay
+forward encrypted packets. They cannot read or hear them. Like any internet
+service, they see your IP address while you are connected. We do not store IP
+addresses.
+
+## What we store
+
+Your app creates a random node ID. The node ID is not tied to your name,
+email or Apple ID. For internet calls, our server stores two things under
+your node ID:
+
+- **Relay minutes used this calendar month**, to enforce the monthly relay
+  allowance. This record is deleted after about 40 days.
+- **A device attestation key** (Apple App Attest), to keep fraudulent
+  clients off the relay.
+
+We store nothing else: no names, no contacts, no audio, no call history and
+no IP addresses. There are no analytics, no advertising identifiers and no
+ads.
+
+## Subscription
+
+Apple bills the relay subscription. Our server examines the subscription
+receipt to grant relay access, but does not store it.
 
 ## What stays on your phone
 
 - **Your name**, if you set one, so others in a room can see who's talking.
-- **A device key pair** used to encrypt conversations. Both live only on your
-  phone and are removed when you delete the app.
+- **A device key pair** used to encrypt conversations and derive your node ID.
+- **Your friends and blocked lists.**
 
-## What leaves your phone
-
-Your voice and your name are sent directly to the other phones in your room
-over the local network, Wi‑Fi Aware or Bluetooth. Traffic is end-to-end
-encrypted between devices; nothing passes through a server.
+All three live only on your phone. They are removed when you delete the app.
 
 ## Permissions
 
