@@ -109,14 +109,11 @@ final class WiFiAwareTransport: Transport, @unchecked Sendable {
 
     private func serve(_ connection: NetworkConnection<UDP>, endpoint: String) async {
         let link = LinkID(transport: id, endpoint: endpoint)
-        do {
-            try await waitForReady(connection)
-        } catch {
-            return
-        }
         lock.withLock { links[link] = connection }
         continuation.yield(.linkUp(link))
         do {
+            // A NetworkConnection only starts on its first send or receive — watching state starts
+            // nothing — so iterating messages here is also what brings the connection up.
             for try await message in connection.messages where !message.content.isEmpty {
                 continuation.yield(.received(message.content, link))
             }
@@ -125,20 +122,5 @@ final class WiFiAwareTransport: Transport, @unchecked Sendable {
         }
         lock.withLock { links[link] = nil }
         continuation.yield(.linkDown(link))
-    }
-
-    private func waitForReady(_ connection: NetworkConnection<UDP>) async throws {
-        let (states, feed) = AsyncStream.makeStream(of: NetworkChannel<UDP>.State.self)
-        connection.onStateUpdate { _, state in feed.yield(state) }
-        if connection.state == .ready { return }
-        for await state in states {
-            switch state {
-            case .ready: return
-            case .failed(let error): throw error
-            case .cancelled: throw TransportError.notStarted
-            default: continue
-            }
-        }
-        throw TransportError.notStarted
     }
 }
