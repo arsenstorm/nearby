@@ -7,7 +7,8 @@ name: Release iOS
 #
 # Secrets (Settings → Secrets → Actions): ASC_KEY_ID, ASC_ISSUER_ID,
 # ASC_PRIVATE_KEY (App Manager key, .p8 contents), DIST_CERT_P12 (base64),
-# DIST_CERT_P12_PASSWORD. See docs/app-store/connect-checklist.md.
+# DIST_CERT_P12_PASSWORD, DEV_CERT_P12 (base64), DEV_CERT_P12_PASSWORD.
+# See docs/app-store/connect-checklist.md.
 on:
   release:
     types: [published]
@@ -36,10 +37,14 @@ jobs:
           mkdir -p "$RUNNER_TEMP/asc"
           printf '%s\n' "$ASC_PRIVATE_KEY" > "$RUNNER_TEMP/asc/AuthKey_$ASC_KEY_ID.p8"
 
-      - name: Import distribution certificate
+      # The dev cert lets automatic signing reuse one identity for the archive
+      # instead of minting a fresh "Created via API" cert on every run.
+      - name: Import signing certificates
         env:
           DIST_CERT_P12: ${{ secrets.DIST_CERT_P12 }}
           DIST_CERT_P12_PASSWORD: ${{ secrets.DIST_CERT_P12_PASSWORD }}
+          DEV_CERT_P12: ${{ secrets.DEV_CERT_P12 }}
+          DEV_CERT_P12_PASSWORD: ${{ secrets.DEV_CERT_P12_PASSWORD }}
         run: |
           KEYCHAIN="$RUNNER_TEMP/ci.keychain-db"
           KEYCHAIN_PASSWORD="$(uuidgen)"
@@ -49,6 +54,9 @@ jobs:
           printf '%s' "$DIST_CERT_P12" | base64 --decode > "$RUNNER_TEMP/dist.p12"
           security import "$RUNNER_TEMP/dist.p12" -k "$KEYCHAIN" \
             -P "$DIST_CERT_P12_PASSWORD" -T /usr/bin/codesign
+          printf '%s' "$DEV_CERT_P12" | base64 --decode > "$RUNNER_TEMP/dev.p12"
+          security import "$RUNNER_TEMP/dev.p12" -k "$KEYCHAIN" \
+            -P "$DEV_CERT_P12_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple: \
             -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
           security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
@@ -65,8 +73,8 @@ jobs:
           fi
           echo "BUILD_NUMBER=$GITHUB_RUN_NUMBER.$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
 
-      # Automatic signing dev-signs the archive (export re-signs for the store), so the runner
-      # mints a development certificate per run: the account's dev-cert list needs occasional pruning.
+      # Automatic signing dev-signs the archive (export re-signs for the store)
+      # using the imported dev cert rather than minting one per run.
       - name: Archive
         run: |
           xcodebuild archive \
