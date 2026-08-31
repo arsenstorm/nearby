@@ -8,7 +8,7 @@ import { base64, importKey, parseCertificate, text, verifyChain } from "./x509.t
 export { parseCertificate };
 export type { Certificate } from "./x509.ts";
 
-export type Entitlement = { kind: "subscriber" | "beta"; expiresMs: number };
+export type Entitlement = { kind: "subscriber" | "beta"; expiresMs: number; meterKey?: string };
 
 export interface AppleVerifyOptions {
   bundleId: string;
@@ -54,8 +54,14 @@ async function verifiedPayload(jws: string, opts: AppleVerifyOptions, now: numbe
 function entitlementOf(payload: Record<string, unknown>, opts: AppleVerifyOptions, now: number): Entitlement | null {
   if (payload?.bundleId !== opts.bundleId) return null;
   if (typeof payload.productId === "string") {
-    const live = subscribed(payload, opts) && typeof payload.expiresDate === "number" && payload.expiresDate > now;
-    return live ? { kind: "subscriber", expiresMs: payload.expiresDate as number } : null;
+    const live =
+      subscribed(payload, opts) &&
+      typeof payload.expiresDate === "number" &&
+      payload.expiresDate > now &&
+      typeof payload.originalTransactionId === "string";
+    return live
+      ? { kind: "subscriber", expiresMs: payload.expiresDate as number, meterKey: payload.originalTransactionId as string }
+      : null;
   }
   // An AppTransaction with a Sandbox or Xcode receipt is a TestFlight or dev build: beta access,
   // re-checked daily because nothing in the payload expires.
@@ -75,10 +81,13 @@ function graceOf(transaction: Record<string, unknown>, renewal: Record<string, u
   const inGrace =
     transaction.bundleId === opts.bundleId &&
     subscribed(transaction, opts) &&
+    typeof transaction.originalTransactionId === "string" &&
     renewal.originalTransactionId === transaction.originalTransactionId &&
     typeof renewal.gracePeriodExpiresDate === "number" &&
     renewal.gracePeriodExpiresDate > now;
-  return inGrace ? { kind: "subscriber", expiresMs: renewal.gracePeriodExpiresDate as number } : null;
+  return inGrace
+    ? { kind: "subscriber", expiresMs: renewal.gracePeriodExpiresDate as number, meterKey: transaction.originalTransactionId as string }
+    : null;
 }
 
 function base64url(value: string): Uint8Array {

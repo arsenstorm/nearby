@@ -21,13 +21,18 @@ const subscription = (overrides = {}) => ({
   productId: PRODUCT,
   type: "Auto-Renewable Subscription",
   expiresDate: now + 30 * DAY_MS,
+  originalTransactionId: "1000000999",
   ...overrides,
 });
 
 // a. Valid subscription.
 {
   const payload = subscription();
-  assert.deepEqual(await verify(chain.jws(payload)), { kind: "subscriber", expiresMs: payload.expiresDate });
+  assert.deepEqual(await verify(chain.jws(payload)), {
+    kind: "subscriber",
+    expiresMs: payload.expiresDate,
+    meterKey: payload.originalTransactionId,
+  });
 }
 console.log("a. valid subscription: pass");
 
@@ -40,12 +45,16 @@ console.log("b. expired subscription: pass");
   const lapsed = subscription({ expiresDate: now - DAY_MS, originalTransactionId: "1000000123" });
   const renewal = (overrides = {}) => ({ originalTransactionId: "1000000123", gracePeriodExpiresDate: now + 2 * DAY_MS, ...overrides });
   const pair = (r) => `${chain.jws(lapsed)},${chain.jws(r)}`;
-  assert.deepEqual(await verify(pair(renewal())), { kind: "subscriber", expiresMs: now + 2 * DAY_MS });
+  assert.deepEqual(await verify(pair(renewal())), { kind: "subscriber", expiresMs: now + 2 * DAY_MS, meterKey: "1000000123" });
   assert.equal(await verify(pair(renewal({ gracePeriodExpiresDate: now - 1 }))), null);
   assert.equal(await verify(pair(renewal({ originalTransactionId: "999" }))), null);
   assert.equal(await verify(pair(renewal({ gracePeriodExpiresDate: undefined }))), null);
   // A live subscription ignores the renewal half; a renewal cannot revive a revoked one.
-  assert.deepEqual(await verify(`${chain.jws(subscription())},${chain.jws(renewal())}`), { kind: "subscriber", expiresMs: now + 30 * DAY_MS });
+  assert.deepEqual(await verify(`${chain.jws(subscription())},${chain.jws(renewal())}`), {
+    kind: "subscriber",
+    expiresMs: now + 30 * DAY_MS,
+    meterKey: "1000000999",
+  });
   assert.equal(await verify(`${chain.jws(subscription({ expiresDate: now - DAY_MS, originalTransactionId: "1000000123", revocationDate: now - DAY_MS }))},${chain.jws(renewal())}`), null);
 }
 console.log("b2. billing grace period: pass");

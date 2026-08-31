@@ -153,7 +153,8 @@ export class PairRoom extends DurableObject<Env> {
     });
     if (!entitlement) return { ok: false, reason: "not entitled" };
     const limit = Number(this.env.ALLOWANCE_MINUTES);
-    if (!(await chargeAllowance(this.env.RELAY, slot.nodeID!, ttl / 60, limit))) {
+    const subject = entitlement.meterKey ? `sub:${entitlement.meterKey}` : slot.nodeID!;
+    if (!(await chargeAllowance(this.env.RELAY, subject, ttl / 60, limit))) {
       return { ok: false, reason: "allowance exhausted" };
     }
     const turn = await mintTurnCredentials(this.env, ttl);

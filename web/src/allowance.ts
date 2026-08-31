@@ -7,12 +7,12 @@
 // risk; if exactness ever matters, move the counter into a Durable Object.
 export async function chargeAllowance(
   kv: KVNamespace,
-  nodeID: string,
+  subject: string,
   minutes: number,
   limitMinutes: number,
   now = Date.now(),
 ): Promise<boolean> {
-  const key = `allowance:${nodeID}:${month(now)}`;
+  const key = `allowance:${subject}:${month(now)}`;
   const used = Number((await kv.get(key)) ?? 0) || 0;
   if (used + minutes > limitMinutes) return false;
   // ~40 days outlives the longest month, so past months expire without a sweep.
