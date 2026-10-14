@@ -92,7 +92,7 @@ jobs:
 
       # One App Store profile per bundle: the app and its Live Activity extension.
       - name: Install app provisioning profile
-        uses: apple-actions/download-provisioning-profiles@v6
+        uses: apple-actions/download-provisioning-profiles@v7
         with:
           bundle-id: com.arsenstorm.nearby
           profile-type: IOS_APP_STORE
@@ -100,7 +100,7 @@ jobs:
           api-key-id: ${{ secrets.ASC_KEY_ID }}
           api-private-key: ${{ secrets.ASC_PRIVATE_KEY }}
       - name: Install extension provisioning profile
-        uses: apple-actions/download-provisioning-profiles@v6
+        uses: apple-actions/download-provisioning-profiles@v7
         with:
           bundle-id: com.arsenstorm.nearby.activity
           profile-type: IOS_APP_STORE
